@@ -703,7 +703,13 @@ void Events::listener_setTitleWindow(void* owner, void* data) {
     if (!g_pCompositor->windowValidMapped(PWINDOW))
 	    return;
 
-    PWINDOW->m_szTitle = g_pXWaylandManager->getTitle(PWINDOW);
+    const auto title = g_pXWaylandManager->getTitle(PWINDOW);
+    bool firstTimeInitialized = (PWINDOW->m_szTitle == "");
+    PWINDOW->m_szTitle = std::move(title);
+    if (firstTimeInitialized) {
+        Debug::log(LOG, "Call listener_mapWindow for %s", PWINDOW->m_szTitle.c_str());
+        listener_mapWindow(owner, data);
+    }
 
     if (PWINDOW == g_pCompositor->m_pLastWindow) // if it's the active, let's post an event to update others
         g_pEventManager->postEvent(SHyprIPCEvent{"activewindow", g_pXWaylandManager->getAppIDClass(PWINDOW) + "," + PWINDOW->m_szTitle});
