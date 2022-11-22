@@ -863,6 +863,12 @@ void CKeybindManager::fullscreenActive(std::string args) {
     if (PWINDOW->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
         return;
 
+    if (g_pCompositor->m_pLastWindow) {
+        if (g_pCompositor->m_pLastWindow->m_bPinned) {
+            pinActive(""); // unpinning
+        }
+    }
+
     g_pCompositor->setWindowFullscreen(PWINDOW, !PWINDOW->m_bIsFullscreen, args == "1" ? FULLSCREEN_MAXIMIZED : FULLSCREEN_FULL);
 }
 
