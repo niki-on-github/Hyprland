@@ -332,6 +332,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
                         const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
                         const auto POSXRAW = POSXSTR.substr(5);
                         posX = PMONITOR->vecSize.x - (!POSXRAW.contains('%') ? std::stoi(POSXRAW) : std::stoi(POSXRAW.substr(0, POSXRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
+                        posX -= PWINDOW->m_vRealSize.goalv().x;
 
                         if (CURSOR)
                             Debug::log(ERR, "Cursor is not compatible with 100%-, ignoring cursor!");
@@ -350,6 +351,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
                         const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
                         const auto POSYRAW = POSYSTR.substr(5);
                         posY = PMONITOR->vecSize.y - (!POSYRAW.contains('%') ? std::stoi(POSYRAW) : std::stoi(POSYRAW.substr(0, POSYRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
+                        posY -= PWINDOW->m_vRealSize.goalv().y;
 
                         if (CURSOR)
                             Debug::log(ERR, "Cursor is not compatible with 100%-, ignoring cursor!");
