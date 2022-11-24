@@ -672,6 +672,7 @@ bool windowRuleValid(const std::string& RULE) {
         && RULE.find("monitor") != 0
         && RULE.find("idleinhibit") != 0
         && RULE != "nofocus"
+        && RULE != "noinitialfocus"
         && RULE != "noblur"
         && RULE != "noshadow"
         && RULE != "noborder"
