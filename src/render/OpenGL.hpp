@@ -68,6 +68,8 @@ struct SCurrentRenderData {
     wlr_box     clipBox = {};
 };
 
+class CGradientValueData;
+
 class CHyprOpenGLImpl {
 public:
 
@@ -82,7 +84,7 @@ public:
     void    renderTexture(const CTexture&, wlr_box*, float a, int round = 0, bool discardOpaque = false, bool allowCustomUV = false);
     void    renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0);
     void    renderRoundedShadow(wlr_box*, int round, int range, float a = 1.0);
-    void    renderBorder(wlr_box*, const CColor&, int round);
+    void    renderBorder(wlr_box*, const CGradientValueData&, int round, float a = 1.0);
 
     void    makeWindowSnapshot(CWindow*);
     void    makeRawWindowSnapshot(CWindow*, CFramebuffer*);
@@ -119,7 +121,6 @@ public:
     pixman_region32_t m_rOriginalDamageRegion; // used for storing the pre-expanded region
 
     std::unordered_map<CWindow*, CFramebuffer> m_mWindowFramebuffers;
-    std::unordered_map<CWindow*, CFramebuffer> m_mWindowResizeFramebuffers;
     std::unordered_map<SLayerSurface*, CFramebuffer> m_mLayerFramebuffers;
     std::unordered_map<CMonitor*, SMonitorRenderData> m_mMonitorRenderResources;
     std::unordered_map<CMonitor*, CTexture> m_mMonitorBGTextures;

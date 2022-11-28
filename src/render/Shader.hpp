@@ -19,6 +19,7 @@ public:
     GLint topLeft;
     GLint bottomRight;
     GLint fullSize;
+    GLint fullSizeUntransformed;
     GLint radius;
     GLint primitiveMultisample;
 
@@ -31,6 +32,10 @@ public:
 
     GLint applyTint;
     GLint tint;
+
+    GLint gradient;
+    GLint gradientLength;
+    GLint angle;
 
     GLint getUniformLocation(const std::string&);
 

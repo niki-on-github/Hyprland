@@ -152,7 +152,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         // only check floating because tiled cant be over fullscreen
         for (auto w = g_pCompositor->m_vWindows.rbegin(); w != g_pCompositor->m_vWindows.rend(); w++) {
             wlr_box box = {(*w)->m_vRealPosition.vec().x, (*w)->m_vRealPosition.vec().y, (*w)->m_vRealSize.vec().x, (*w)->m_vRealSize.vec().y};
-            if ((((*w)->m_bIsFloating && (*w)->m_bIsMapped && ((*w)->m_bCreatedOverFullscreen || (*w)->m_bPinned)) || ((*w)->m_iWorkspaceID == SPECIAL_WORKSPACE_ID && PMONITOR->specialWorkspaceOpen)) && wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y) && g_pCompositor->isWorkspaceVisible((*w)->m_iWorkspaceID) && !(*w)->isHidden()) {
+            if ((((*w)->m_bIsFloating && (*w)->m_bIsMapped && ((*w)->m_bCreatedOverFullscreen || (*w)->m_bPinned)) || (g_pCompositor->isWorkspaceSpecial((*w)->m_iWorkspaceID) && PMONITOR->specialWorkspaceID)) && wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y) && g_pCompositor->isWorkspaceVisible((*w)->m_iWorkspaceID) && !(*w)->isHidden()) {
                 pFoundWindow = (*w).get();
                 break;
             }
@@ -171,10 +171,10 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     if (!foundSurface) {
         if (PWORKSPACE->m_bHasFullscreenWindow && PWORKSPACE->m_efFullscreenMode == FULLSCREEN_MAXIMIZED) {
 
-            if (PMONITOR->specialWorkspaceOpen) {
+            if (PMONITOR->specialWorkspaceID) {
                 pFoundWindow = g_pCompositor->vectorToWindowIdeal(mouseCoords);
 
-                if (pFoundWindow && pFoundWindow->m_iWorkspaceID != SPECIAL_WORKSPACE_ID) {
+                if (pFoundWindow && !g_pCompositor->isWorkspaceSpecial(pFoundWindow->m_iWorkspaceID)) {
                     pFoundWindow = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
                 }
             } else {
@@ -218,7 +218,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
                 wlr_xcursor_manager_set_cursor_image(g_pCompositor->m_sWLRXCursorMgr, "crosshair", g_pCompositor->m_sWLRCursor);
             else
                 wlr_xcursor_manager_set_cursor_image(g_pCompositor->m_sWLRXCursorMgr, "left_ptr", g_pCompositor->m_sWLRCursor);
-
+                
             m_bEmptyFocusCursorSet = true;
         }
 
@@ -729,7 +729,7 @@ void CInputManager::setPointerConfigs() {
             }
 
             const auto SCROLLMETHOD = HASCONFIG ? g_pConfigManager->getDeviceString(devname, "scroll_method") : g_pConfigManager->getString("input:scroll_method");
-            if (SCROLLMETHOD == "" || SCROLLMETHOD == STRVAL_EMPTY) {
+            if (SCROLLMETHOD == "") {
                 libinput_device_config_scroll_set_method(LIBINPUTDEV, libinput_device_config_scroll_get_default_method(LIBINPUTDEV));
             } else if (SCROLLMETHOD == "no_scroll") {
                 libinput_device_config_scroll_set_method(LIBINPUTDEV, LIBINPUT_CONFIG_SCROLL_NO_SCROLL);
@@ -771,7 +771,7 @@ void CInputManager::setPointerConfigs() {
 
             const auto ACCELPROFILE = HASCONFIG ? g_pConfigManager->getDeviceString(devname, "accel_profile") : g_pConfigManager->getString("input:accel_profile");
 
-            if (ACCELPROFILE == "" || ACCELPROFILE == STRVAL_EMPTY) {
+            if (ACCELPROFILE == "") {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, libinput_device_config_accel_get_default_profile(LIBINPUTDEV));
             } else if (ACCELPROFILE == "adaptive") {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);

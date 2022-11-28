@@ -88,7 +88,7 @@ bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow, CMonitor* pMonitor) {
     if (g_pCompositor->isWorkspaceVisible(pWindow->m_iWorkspaceID) && pWindow->m_bIsFloating /* tiled windows can't be multi-ws */)
         return !pWindow->m_bIsFullscreen; // Do not draw fullscreen windows on other monitors
 
-    if (pMonitor->specialWorkspaceOpen && pWindow->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
+    if (pMonitor->specialWorkspaceID && g_pCompositor->isWorkspaceSpecial(pWindow->m_iWorkspaceID))
         return true;
 
     return false;
@@ -111,7 +111,7 @@ bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow) {
         if (PWORKSPACE && PWORKSPACE->m_iMonitorID == m->ID && (PWORKSPACE->m_vRenderOffset.isBeingAnimated() || PWORKSPACE->m_fAlpha.isBeingAnimated()))
             return true;
 
-        if (m->specialWorkspaceOpen && pWindow->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
+        if (m->specialWorkspaceID && g_pCompositor->isWorkspaceSpecial(pWindow->m_iWorkspaceID))
             return true;
     }
 
@@ -183,11 +183,11 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
     }
 
     // and then special windows
-    for (auto& w : g_pCompositor->m_vWindows) {
+    if (pMonitor->specialWorkspaceID) for (auto& w : g_pCompositor->m_vWindows) {
         if (!g_pCompositor->windowValidMapped(w.get()) && !w->m_bFadingOut)
             continue;
 
-        if (w->m_iWorkspaceID != SPECIAL_WORKSPACE_ID)
+        if (w->m_iWorkspaceID != pMonitor->specialWorkspaceID)
             continue;
 
         if (!shouldRenderWindow(w.get(), pMonitor))
@@ -228,7 +228,6 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
     const auto REALPOS = pWindow->m_vRealPosition.vec() + (pWindow->m_bPinned ? Vector2D{} : PWORKSPACE->m_vRenderOffset.vec());
     static auto *const PNOFLOATINGBORDERS = &g_pConfigManager->getConfigValuePtr("general:no_border_on_floating")->intValue;
-    static auto *const PTRANSITIONS = &g_pConfigManager->getConfigValuePtr("animations:use_resize_transitions")->intValue;
 
     SRenderData renderdata = {pMonitor->output, time, REALPOS.x, REALPOS.y};
     if (ignorePosition) {
@@ -295,39 +294,26 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
         wlr_surface_for_each_surface(g_pXWaylandManager->getWindowSurface(pWindow), renderSurface, &renderdata);
 
-        if (*PTRANSITIONS && !ignorePosition /* ignorePosition probably means we are rendering the snapshot rn */) {
-            const auto PFB = g_pHyprOpenGL->m_mWindowResizeFramebuffers.find(pWindow);
-
-            if (PFB != g_pHyprOpenGL->m_mWindowResizeFramebuffers.end() && PFB->second.isAllocated()) {
-                wlr_box box = {renderdata.x - pMonitor->vecPosition.x, renderdata.y - pMonitor->vecPosition.y, renderdata.w, renderdata.h};
-
-                // adjust UV (remove when I figure out how to change the size of the fb)
-                g_pHyprOpenGL->m_RenderData.primarySurfaceUVTopLeft = {0, 0};
-                g_pHyprOpenGL->m_RenderData.primarySurfaceUVBottomRight = { pWindow->m_vRealSize.m_vBegun.x / pMonitor->vecPixelSize.x, pWindow->m_vRealSize.m_vBegun.y / pMonitor->vecPixelSize.y};
-
-                g_pHyprOpenGL->m_bEndFrame = true;
-                g_pHyprOpenGL->renderTexture(PFB->second.m_cTex, &box, (1.f - pWindow->m_vRealSize.getPercent()) * 84.f, 0, false, true);
-                g_pHyprOpenGL->m_bEndFrame = false;
-
-                g_pHyprOpenGL->m_RenderData.primarySurfaceUVTopLeft = Vector2D(-1, -1);
-                g_pHyprOpenGL->m_RenderData.primarySurfaceUVBottomRight = Vector2D(-1, -1);
-            }
-        }
-
         if (renderdata.decorate && pWindow->m_sSpecialRenderData.border) {
             static auto *const PROUNDING = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
 
             float rounding = renderdata.dontRound ? 0 : renderdata.rounding == -1 ? *PROUNDING : renderdata.rounding;
             rounding *= pMonitor->scale;
 
-            auto col = g_pHyprOpenGL->m_pCurrentWindow->m_cRealBorderColor.col();
-            col.a *= renderdata.fadeAlpha * renderdata.alpha / 255.f;
+            auto grad = g_pHyprOpenGL->m_pCurrentWindow->m_cRealBorderColor;
+            const bool ANIMATED = g_pHyprOpenGL->m_pCurrentWindow->m_fBorderAnimationProgress.isBeingAnimated();
+            float a1 = renderdata.fadeAlpha * renderdata.alpha / 255.f * (ANIMATED ? g_pHyprOpenGL->m_pCurrentWindow->m_fBorderAnimationProgress.fl() : 1.f);
 
             wlr_box windowBox = {renderdata.x - pMonitor->vecPosition.x, renderdata.y - pMonitor->vecPosition.y, renderdata.w, renderdata.h};
 
             scaleBox(&windowBox, pMonitor->scale);
 
-            g_pHyprOpenGL->renderBorder(&windowBox, col, rounding);
+            g_pHyprOpenGL->renderBorder(&windowBox, grad, rounding, a1);
+
+            if (ANIMATED) {
+                float a2 = renderdata.fadeAlpha * renderdata.alpha / 255.f * (1.f - g_pHyprOpenGL->m_pCurrentWindow->m_fBorderAnimationProgress.fl());
+                g_pHyprOpenGL->renderBorder(&windowBox, g_pHyprOpenGL->m_pCurrentWindow->m_cRealBorderColorPrevious, rounding, a2);
+            }
         }
     }
 
@@ -418,7 +404,7 @@ void CHyprRenderer::renderAllClientsForMonitor(const int& ID, timespec* time) {
         if (w->m_bIsFloating)
             continue;  // floating are in the second pass
 
-        if (w->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
+        if (g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
             continue;  // special are in the third pass
 
         if (!shouldRenderWindow(w.get(), PMONITOR))
@@ -445,7 +431,7 @@ void CHyprRenderer::renderAllClientsForMonitor(const int& ID, timespec* time) {
         if (w->m_bIsFloating)
             continue;  // floating are in the second pass
 
-        if (w->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
+        if (g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
             continue; // special are in the third pass
 
         if (!shouldRenderWindow(w.get(), PMONITOR))
@@ -463,7 +449,7 @@ void CHyprRenderer::renderAllClientsForMonitor(const int& ID, timespec* time) {
         if (!w->m_bIsFloating)
             continue;
 
-        if (w->m_iWorkspaceID == SPECIAL_WORKSPACE_ID)
+        if (g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
             continue;
 
         if (!shouldRenderWindow(w.get(), PMONITOR))
@@ -478,7 +464,7 @@ void CHyprRenderer::renderAllClientsForMonitor(const int& ID, timespec* time) {
         if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
             continue;
 
-        if (w->m_iWorkspaceID != SPECIAL_WORKSPACE_ID)
+        if (!g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
             continue;
 
         if (!shouldRenderWindow(w.get(), PMONITOR))
@@ -581,7 +567,7 @@ bool CHyprRenderer::attemptDirectScanout(CMonitor* pMonitor) {
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pMonitor->activeWorkspace);
 
-    if (!PWORKSPACE || !PWORKSPACE->m_bHasFullscreenWindow || g_pInputManager->m_sDrag.drag || g_pCompositor->m_sSeat.exclusiveClient)
+    if (!PWORKSPACE || !PWORKSPACE->m_bHasFullscreenWindow || g_pInputManager->m_sDrag.drag || g_pCompositor->m_sSeat.exclusiveClient || pMonitor->specialWorkspaceID)
         return false;
 
     const auto PCANDIDATE = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);

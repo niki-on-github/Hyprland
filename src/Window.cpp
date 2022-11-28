@@ -5,7 +5,7 @@
 CWindow::CWindow() {
     m_vRealPosition.create(AVARTYPE_VECTOR, g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
     m_vRealSize.create(AVARTYPE_VECTOR, g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
-    m_cRealBorderColor.create(AVARTYPE_COLOR, g_pConfigManager->getAnimationPropertyConfig("border"), (void*)this, AVARDAMAGE_BORDER);
+    m_fBorderAnimationProgress.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("border"), (void*)this, AVARDAMAGE_BORDER);
     m_fAlpha.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("fadeIn"), (void*)this, AVARDAMAGE_ENTIRE);
     m_fActiveInactiveAlpha.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("fadeSwitch"), (void*)this, AVARDAMAGE_ENTIRE);
     m_cRealShadowColor.create(AVARTYPE_COLOR, g_pConfigManager->getAnimationPropertyConfig("fadeShadow"), (void*)this, AVARDAMAGE_SHADOW);
@@ -262,7 +262,7 @@ void CWindow::onUnmap() {
 
     m_vRealPosition.setCallbackOnEnd(unregisterVar);
     m_vRealSize.setCallbackOnEnd(unregisterVar);
-    m_cRealBorderColor.setCallbackOnEnd(unregisterVar);
+    m_fBorderAnimationProgress.setCallbackOnEnd(unregisterVar);
     m_fActiveInactiveAlpha.setCallbackOnEnd(unregisterVar);
     m_fAlpha.setCallbackOnEnd(unregisterVar);
     m_cRealShadowColor.setCallbackOnEnd(unregisterVar);
@@ -276,7 +276,7 @@ void CWindow::onMap() {
     // JIC, reset the callbacks. If any are set, we'll make sure they are cleared so we don't accidentally unset them. (In case a window got remapped)
     m_vRealPosition.resetAllCallbacks();
     m_vRealSize.resetAllCallbacks();
-    m_cRealBorderColor.resetAllCallbacks();
+    m_fBorderAnimationProgress.resetAllCallbacks();
     m_fActiveInactiveAlpha.resetAllCallbacks();
     m_fAlpha.resetAllCallbacks();
     m_cRealShadowColor.resetAllCallbacks();
@@ -284,7 +284,7 @@ void CWindow::onMap() {
 
     m_vRealPosition.registerVar();
     m_vRealSize.registerVar();
-    m_cRealBorderColor.registerVar();
+    m_fBorderAnimationProgress.registerVar();
     m_fActiveInactiveAlpha.registerVar();
     m_fAlpha.registerVar();
     m_cRealShadowColor.registerVar();
@@ -318,7 +318,8 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
     } else if (r.szRule == "noshadow") {
         m_sAdditionalConfigData.forceNoShadow = true;
     } else if (r.szRule == "opaque") {
-        m_sAdditionalConfigData.forceOpaque = true;
+        if (!m_sAdditionalConfigData.forceOpaqueOverriden)
+            m_sAdditionalConfigData.forceOpaque = true;
     } else if (r.szRule.find("rounding") == 0) {
         try {
             m_sAdditionalConfigData.rounding = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
@@ -369,7 +370,8 @@ void CWindow::updateDynamicRules() {
     m_sAdditionalConfigData.forceNoBlur = false;
     m_sAdditionalConfigData.forceNoBorder = false;
     m_sAdditionalConfigData.forceNoShadow = false;
-    m_sAdditionalConfigData.forceOpaque = false;
+    if (!m_sAdditionalConfigData.forceOpaqueOverriden)
+        m_sAdditionalConfigData.forceOpaque = false;
     m_sAdditionalConfigData.forceNoAnims = false;
     m_sAdditionalConfigData.animationStyle = "";
     m_sAdditionalConfigData.rounding = -1;

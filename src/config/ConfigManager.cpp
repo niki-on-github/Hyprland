@@ -11,6 +11,9 @@
 #include <iostream>
 
 CConfigManager::CConfigManager() {
+    configValues["general:col.active_border"].data = std::make_shared<CGradientValueData>(0xffffffff);
+    configValues["general:col.inactive_border"].data = std::make_shared<CGradientValueData>(0xff444444);
+
     setDefaultVars();
     setDefaultAnimationVars();
 
@@ -39,8 +42,8 @@ void CConfigManager::setDefaultVars() {
     configValues["general:no_border_on_floating"].intValue = 0;
     configValues["general:gaps_in"].intValue = 5;
     configValues["general:gaps_out"].intValue = 20;
-    configValues["general:col.active_border"].intValue = 0xffffffff;
-    configValues["general:col.inactive_border"].intValue = 0xff444444;
+    ((CGradientValueData*)configValues["general:col.active_border"].data.get())->reset(0xffffffff);
+    ((CGradientValueData*)configValues["general:col.inactive_border"].data.get())->reset(0xff444444);
     configValues["general:cursor_inactive_timeout"].intValue = 0;
     configValues["general:no_cursor_warps"].intValue = 0;
 
@@ -73,7 +76,7 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:blur_size"].intValue = 8;
     configValues["decoration:blur_passes"].intValue = 1;
     configValues["decoration:blur_ignore_opacity"].intValue = 0;
-    configValues["decoration:blur_new_optimizations"].intValue = 0;
+    configValues["decoration:blur_new_optimizations"].intValue = 1;
     configValues["decoration:active_opacity"].floatValue = 1;
     configValues["decoration:inactive_opacity"].floatValue = 1;
     configValues["decoration:fullscreen_opacity"].floatValue = 1;
@@ -106,7 +109,6 @@ void CConfigManager::setDefaultVars() {
     configValues["master:no_gaps_when_only"].intValue = 0;
 
     configValues["animations:enabled"].intValue = 1;
-    configValues["animations:use_resize_transitions"].intValue = 0;
     configValues["animations:speed"].floatValue = 7.f;
     configValues["animations:curve"].strValue = "default";
     configValues["animations:windows_style"].strValue = STRVAL_EMPTY;
@@ -349,6 +351,56 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
         } catch (...) {
             Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
             parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">.";
+        }
+    } else if (CONFIGENTRY->data.get() != nullptr) {
+
+        switch (CONFIGENTRY->data->getDataType()) {
+            case CVD_TYPE_GRADIENT: {
+                
+                CVarList varlist(VALUE, 0, ' ');
+
+                CGradientValueData* data = (CGradientValueData*)CONFIGENTRY->data.get();
+                data->m_vColors.clear();
+
+                for (auto& var : varlist) {
+                    if (var.find("deg") != std::string::npos) {
+                        // last arg
+                        try {
+                            data->m_fAngle = std::stoi(var.substr(0, var.find("deg"))) * (PI / 180.0); // radians
+                        } catch (...) {
+                            Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
+                            parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">.";
+                        }
+
+                        break;
+                    }
+
+                    if (data->m_vColors.size() >= 10) {
+                        Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
+                        parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">. Max colors in a gradient is 10.";
+                        break;
+                    }
+
+                    try {
+                        data->m_vColors.push_back(CColor(configStringToInt(var)) * (1.f / 255.f));
+                    } catch (std::exception& e) {
+                        Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
+                        parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">. " + e.what();
+                    }
+                }
+
+                if (data->m_vColors.size() == 0) {
+                    Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
+                    parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">. No colors provided.";
+
+                    data->m_vColors.push_back(0); // transparent
+                }
+
+                break;
+            }
+            default: {
+                UNREACHABLE();
+            }
         }
     }
 }
@@ -680,6 +732,7 @@ bool windowRuleValid(const std::string& RULE) {
         && RULE != "opaque"
         && RULE != "forceinput"
         && RULE != "fullscreen"
+        && RULE != "nofullscreenrequest"
         && RULE != "pin"
         && RULE != "noanim"
         && RULE != "windowdance"
@@ -931,6 +984,8 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
         currentCategory = "";
     }
 
+    int needsLayoutRecalc = COMMAND == "monitor"; // 0 - no, 1 - yes, 2 - maybe
+
     if (COMMAND == "exec") {
         if (isFirstLaunch) {
             firstExecRequests.push_back(VALUE);
@@ -954,16 +1009,22 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
     else if (COMMAND == "submap") handleSubmap(COMMAND, VALUE);
     else if (COMMAND == "blurls") handleBlurLS(COMMAND, VALUE);
     else if (COMMAND == "wsbind") handleBindWS(COMMAND, VALUE);
-    else
+    else {
         configSetValueSafe(currentCategory + (currentCategory == "" ? "" : ":") + COMMAND, VALUE);
+        needsLayoutRecalc = 2;
+    }
 
     if (dynamic) {
         std::string retval = parseError;
         parseError = "";
 
-        // invalidate layouts jic
-        for (auto& m : g_pCompositor->m_vMonitors)
-            g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
+        // invalidate layouts if they changed
+        if (needsLayoutRecalc) {
+            if (needsLayoutRecalc == 1 || VALUE.find("gaps_") || VALUE.find("dwindle:") == 0 || VALUE.find("master:") == 0) {
+                for (auto& m : g_pCompositor->m_vMonitors)
+                    g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
+            }
+        }
 
         // Update window border colors
         g_pCompositor->updateAllWindowsAnimatedDecorationValues();
@@ -1608,4 +1669,8 @@ CMonitor* CConfigManager::getBoundMonitorForWS(std::string wsname) {
 
 void CConfigManager::addExecRule(SExecRequestedRule rule) {
     execRequestedRules.push_back(rule);
+}
+
+ICustomConfigValueData::~ICustomConfigValueData() {
+    ; // empty
 }

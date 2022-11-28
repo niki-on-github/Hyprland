@@ -6,6 +6,7 @@
 #include "helpers/AnimatedVariable.hpp"
 #include "render/decorations/IHyprWindowDecoration.hpp"
 #include <deque>
+#include "config/ConfigDataValues.hpp"
 
 enum eIdleInhibitMode {
     IDLEINHIBIT_NONE = 0,
@@ -32,6 +33,7 @@ struct SWindowAdditionalConfigData {
     int rounding = -1; // -1 means no
     bool forceNoBlur = false;
     bool forceOpaque = false;
+    bool forceOpaqueOverriden = false; // if true, a rule will not change the forceOpaque state. This is for the force opaque dispatcher.
     bool forceAllowsInput = false;
     bool forceNoAnims = false;
     bool forceNoBorder = false;
@@ -129,13 +131,16 @@ public:
     bool            m_bNoFocus = false;
     bool            m_bNoInitialFocus = false;
 
-    // initial fullscreen
+    // initial fullscreen and fullscreen disabled
     bool            m_bWantsInitialFullscreen = false;
+    bool            m_bNoFullscreenRequest = false;
 
     SSurfaceTreeNode* m_pSurfaceTree = nullptr;
 
     // Animated border
-    CAnimatedVariable m_cRealBorderColor;
+    CGradientValueData m_cRealBorderColor = {0};
+    CGradientValueData m_cRealBorderColorPrevious = {0};
+    CAnimatedVariable  m_fBorderAnimationProgress;
 
     // Fade in-out
     CAnimatedVariable m_fAlpha;

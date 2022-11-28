@@ -10,16 +10,52 @@ varying vec2 v_texcoord;
 
 uniform vec2 topLeft;
 uniform vec2 fullSize;
+uniform vec2 fullSizeUntransformed;
 uniform float radius;
 uniform float thick;
 uniform int primitiveMultisample;
 
+uniform vec4 gradient[10];
+uniform int gradientLength;
+uniform float angle;
+uniform float alpha;
+
+vec4 getColorForCoord(vec2 normalizedCoord) {
+    if (gradientLength < 2)
+        return gradient[0];
+
+    float finalAng = 0.0;
+
+    if (angle > 4.71 /* 270 deg */) {
+        normalizedCoord[1] = 1.0 - normalizedCoord[1];
+        finalAng = 6.28 - angle;
+    } else if (angle > 3.14 /* 180 deg */) {
+        normalizedCoord[0] = 1.0 - normalizedCoord[0];
+        normalizedCoord[1] = 1.0 - normalizedCoord[1];
+        finalAng = angle - 3.14;
+    } else if (angle > 1.57 /* 90 deg */) {
+        normalizedCoord[0] = 1.0 - normalizedCoord[0];
+        finalAng = 3.14 - angle;
+    } else {
+        finalAng = angle;
+    }
+
+    float sine = sin(finalAng);
+
+    float progress = (normalizedCoord[1] * sine + normalizedCoord[0] * (1.0 - sine)) * float(gradientLength - 1);
+    int bottom = int(floor(progress));
+    int top = bottom + 1;
+
+    return gradient[top] * (progress - float(bottom)) + gradient[bottom] * (float(top) - progress);
+}
+
 void main() {
 
     highp vec2 pixCoord = vec2(gl_FragCoord);
-    vec2 originalPixCoord = fullSize * v_texcoord;
+    highp vec2 originalPixCoord = v_texcoord;
+    originalPixCoord *= fullSizeUntransformed;
 
-    vec4 pixColor = v_color;
+    vec4 pixColor = vec4(1.0, 1.0, 1.0, 1.0);
 
     bool done = false;
 
@@ -27,23 +63,23 @@ void main() {
     pixCoord *= vec2(lessThan(pixCoord, vec2(0.0))) * -2.0 + 1.0;
     pixCoord -= fullSize * 0.5 - radius;
 
-    if (min(pixCoord.x, pixCoord.y) > 0.0) {
+    if (min(pixCoord.x, pixCoord.y) > 0.0 && radius > 0.0) {
 
 	    float dist = length(pixCoord);
 
-	    if (dist > radius || dist < radius - thick - 1.0)
+	    if (dist > radius + 1.0 || dist < radius - thick - 1.0)
 	        discard;
 
 	    if (primitiveMultisample == 1 && (dist > radius - 1.0 || dist < radius - thick + 1.0)) {
 	        float distances = 0.0;
             float len = length(pixCoord + vec2(0.25, 0.25));
-	        distances += float(len < radius && len > radius - thick);
+	        distances += float(len < radius + 0.5 && len > radius - thick);
             len = length(pixCoord + vec2(0.75, 0.25));
-            distances += float(len < radius && len > radius - thick);
+            distances += float(len < radius + 0.5 && len > radius - thick);
             len = length(pixCoord + vec2(0.25, 0.75));
-            distances += float(len < radius && len > radius - thick);
+            distances += float(len < radius + 0.5 && len > radius - thick);
             len = length(pixCoord + vec2(0.75, 0.75));
-            distances += float(len < radius && len > radius - thick);
+            distances += float(len < radius + 0.5 && len > radius - thick);
 
 	        if (distances == 0.0)
 		        discard;
@@ -51,7 +87,8 @@ void main() {
 	        distances /= 4.0;
 
 	        pixColor = pixColor * distances;
-        }
+        } else if (dist > radius || dist < radius - thick)
+            discard;
 
         done = true;
     }
@@ -60,9 +97,9 @@ void main() {
     if (!done) {
         // distance to all straight bb borders
         float distanceT = originalPixCoord[1];
-        float distanceB = fullSize[1] - originalPixCoord[1];
+        float distanceB = fullSizeUntransformed[1] - originalPixCoord[1];
         float distanceL = originalPixCoord[0];
-        float distanceR = fullSize[0] - originalPixCoord[0];
+        float distanceR = fullSizeUntransformed[0] - originalPixCoord[0];
 
         // get the smallest
         float smallest = min(min(distanceT, distanceB), min(distanceL, distanceR));
@@ -73,6 +110,9 @@ void main() {
 
     if (pixColor[3] == 0.0)
         discard;
+
+    pixColor = getColorForCoord(v_texcoord) * pixColor[3];
+    pixColor[3] *= alpha;
 
     gl_FragColor = pixColor;
 }

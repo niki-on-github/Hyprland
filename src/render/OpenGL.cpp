@@ -237,9 +237,13 @@ void CHyprOpenGLImpl::initShaders() {
     m_RenderData.pCurrentMonData->m_shBORDER1.topLeft = glGetUniformLocation(prog, "topLeft");
     m_RenderData.pCurrentMonData->m_shBORDER1.bottomRight = glGetUniformLocation(prog, "bottomRight");
     m_RenderData.pCurrentMonData->m_shBORDER1.fullSize = glGetUniformLocation(prog, "fullSize");
+    m_RenderData.pCurrentMonData->m_shBORDER1.fullSizeUntransformed = glGetUniformLocation(prog, "fullSizeUntransformed");
     m_RenderData.pCurrentMonData->m_shBORDER1.radius = glGetUniformLocation(prog, "radius");
     m_RenderData.pCurrentMonData->m_shBORDER1.primitiveMultisample = glGetUniformLocation(prog, "primitiveMultisample");
-    m_RenderData.pCurrentMonData->m_shBORDER1.color = glGetUniformLocation(prog, "color");
+    m_RenderData.pCurrentMonData->m_shBORDER1.gradient = glGetUniformLocation(prog, "gradient");
+    m_RenderData.pCurrentMonData->m_shBORDER1.gradientLength = glGetUniformLocation(prog, "gradientLength");
+    m_RenderData.pCurrentMonData->m_shBORDER1.angle = glGetUniformLocation(prog, "angle");
+    m_RenderData.pCurrentMonData->m_shBORDER1.alpha = glGetUniformLocation(prog, "alpha");
 
     m_RenderData.pCurrentMonData->m_bShadersInitialized = true;
 
@@ -644,8 +648,9 @@ void CHyprOpenGLImpl::markBlurDirtyForMonitor(CMonitor* pMonitor) {
 
 void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
     static auto *const PBLURNEWOPTIMIZE = &g_pConfigManager->getConfigValuePtr("decoration:blur_new_optimizations")->intValue;
+    static auto *const PBLUR = &g_pConfigManager->getConfigValuePtr("decoration:blur")->intValue;
 
-    if (!*PBLURNEWOPTIMIZE || !m_mMonitorRenderResources[pMonitor].blurFBDirty)
+    if (!*PBLURNEWOPTIMIZE || !m_mMonitorRenderResources[pMonitor].blurFBDirty || !*PBLUR)
         return;
 
     bool has = false;
@@ -688,13 +693,53 @@ void CHyprOpenGLImpl::preBlurForCurrentMonitor() {
 
 void CHyprOpenGLImpl::preWindowPass() {
     static auto *const PBLURNEWOPTIMIZE = &g_pConfigManager->getConfigValuePtr("decoration:blur_new_optimizations")->intValue;
+    static auto *const PBLUR = &g_pConfigManager->getConfigValuePtr("decoration:blur")->intValue;
 
-    if (!m_RenderData.pCurrentMonData->blurFBDirty || !*PBLURNEWOPTIMIZE)
+    if (!m_RenderData.pCurrentMonData->blurFBDirty || !*PBLURNEWOPTIMIZE || !*PBLUR)
         return;
+
+    auto windowShouldBeBlurred = [&] (CWindow* pWindow) -> bool {
+        if (!pWindow)
+            return false;
+
+        if (pWindow->m_sAdditionalConfigData.forceNoBlur)
+            return false;
+
+        const auto PSURFACE = g_pXWaylandManager->getWindowSurface(pWindow);
+
+        if (PSURFACE->opaque)
+            return false;
+
+        pixman_region32_t inverseOpaque;
+        pixman_region32_init(&inverseOpaque);
+        const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
+        const float A = pWindow->m_fAlpha.fl() * pWindow->m_fActiveInactiveAlpha.fl() * PWORKSPACE->m_fAlpha.fl() / 255.f;
+
+        if (A >= 255.f) {
+            pixman_box32_t surfbox = {0, 0, PSURFACE->current.width, PSURFACE->current.height};
+            pixman_region32_copy(&inverseOpaque, &PSURFACE->current.opaque);
+            pixman_region32_inverse(&inverseOpaque, &inverseOpaque, &surfbox);
+            pixman_region32_intersect_rect(&inverseOpaque, &inverseOpaque, 0, 0, PSURFACE->current.width, PSURFACE->current.height);
+
+            if (!pixman_region32_not_empty(&inverseOpaque)) {
+                pixman_region32_fini(&inverseOpaque);
+                return false;
+            }
+        }
+
+        pixman_region32_fini(&inverseOpaque);
+
+        return true;
+    };
 
     bool hasWindows = false;
     for (auto& w : g_pCompositor->m_vWindows) {
         if (w->m_iWorkspaceID == m_RenderData.pMonitor->activeWorkspace && !w->isHidden() && w->m_bIsMapped && !w->m_bIsFloating) {
+
+            // check if window is valid
+            if (!windowShouldBeBlurred(w.get()))
+                continue;
+            
             hasWindows = true;
             break;
         }
@@ -720,7 +765,7 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, wlr_box* pBox, 
     pixman_region32_intersect_rect(&damage, m_RenderData.pDamage, pBox->x, pBox->y, pBox->width, pBox->height);  // clip it to the box
 
     if(!pixman_region32_not_empty(&damage))
-	return;
+	    return;
 
     if (*PBLURENABLED == 0 || (*PNOBLUROVERSIZED && m_RenderData.primarySurfaceUVTopLeft != Vector2D(-1, -1)) || (m_pCurrentWindow && m_pCurrentWindow->m_sAdditionalConfigData.forceNoBlur)) {
         renderTexture(tex, pBox, a, round, false, true);
@@ -730,23 +775,22 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, wlr_box* pBox, 
     // amazing hack: the surface has an opaque region!
     pixman_region32_t inverseOpaque;
     pixman_region32_init(&inverseOpaque);
-    if (a == 255.f) {
-        pixman_box32_t monbox = {0, 0, m_RenderData.pMonitor->vecTransformedSize.x, m_RenderData.pMonitor->vecTransformedSize.y};
+    if (a >= 255.f) {
+        pixman_box32_t surfbox = {0, 0, pSurface->current.width, pSurface->current.height};
         pixman_region32_copy(&inverseOpaque, &pSurface->current.opaque);
-        pixman_region32_translate(&inverseOpaque, pBox->x, pBox->y);
-        pixman_region32_inverse(&inverseOpaque, &inverseOpaque, &monbox);
-        pixman_region32_intersect(&inverseOpaque, &damage, &inverseOpaque);
-    } else {
-        pixman_region32_copy(&inverseOpaque, &damage);
-    }
+        pixman_region32_inverse(&inverseOpaque, &inverseOpaque, &surfbox);
+        pixman_region32_intersect_rect(&inverseOpaque, &inverseOpaque, 0, 0, pSurface->current.width, pSurface->current.height);
 
-    if (!pixman_region32_not_empty(&inverseOpaque)) {
-        renderTexture(tex, pBox, a, round, false, true); // reject blurring a fully opaque window
-        return;
+        if (!pixman_region32_not_empty(&inverseOpaque)) {
+            pixman_region32_fini(&inverseOpaque);
+            renderTexture(tex, pBox, a, round, false, true);
+            return;
+        }
     }
+    pixman_region32_fini(&inverseOpaque);
 
-        //                                                                        vvv TODO: layered blur fbs?
-    const bool USENEWOPTIMIZE = (*PBLURNEWOPTIMIZE && m_pCurrentWindow && !m_pCurrentWindow->m_bIsFloating && m_RenderData.pCurrentMonData->blurFB.m_cTex.m_iTexID && m_pCurrentWindow->m_iWorkspaceID != SPECIAL_WORKSPACE_ID);
+    //                                                                        vvv TODO: layered blur fbs?
+    const bool USENEWOPTIMIZE = (*PBLURNEWOPTIMIZE && m_pCurrentWindow && !m_pCurrentWindow->m_bIsFloating && m_RenderData.pCurrentMonData->blurFB.m_cTex.m_iTexID && !g_pCompositor->isWorkspaceSpecial(m_pCurrentWindow->m_iWorkspaceID));
 
     const auto POUTFB = USENEWOPTIMIZE ? &m_RenderData.pCurrentMonData->blurFB : blurMainFramebufferWithDamage(a, pBox, &inverseOpaque);
 
@@ -804,7 +848,7 @@ void pushVert2D(float x, float y, float* arr, int& counter, wlr_box* box) {
     counter++;
 }
 
-void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CColor& col, int round) {
+void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad, int round, float a) {
     RASSERT((box->width > 0 && box->height > 0), "Tried to render rect with width/height < 0!");
     RASSERT(m_RenderData.pMonitor, "Tried to render rect without begin()!");
 
@@ -819,27 +863,13 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CColor& col, int round) {
 
     int scaledBorderSize = *PBORDERSIZE * m_RenderData.pMonitor->scale;
 
-    if (round < 1) {
-        // zero rounding, just lines
-        wlr_box borderbox = {box->x - scaledBorderSize, box->y - scaledBorderSize, scaledBorderSize, box->height + 2 * scaledBorderSize};
-        renderRect(&borderbox, col, 0); // left
-        borderbox = {box->x, box->y - (int)scaledBorderSize, box->width + (int)scaledBorderSize, (int)scaledBorderSize};
-        renderRect(&borderbox, col, 0);  // top
-        borderbox = {box->x + box->width, box->y, (int)scaledBorderSize, box->height + (int)scaledBorderSize};
-        renderRect(&borderbox, col, 0);  // right
-        borderbox = {box->x, box->y + box->height, box->width, (int)scaledBorderSize};
-        renderRect(&borderbox, col, 0);  // bottom
-
-        return;
-    }
-
     // adjust box
     box->x -= scaledBorderSize;
     box->y -= scaledBorderSize;
     box->width += 2 * scaledBorderSize;
     box->height += 2 * scaledBorderSize;
 
-    round += scaledBorderSize;
+    round += round == 0 ? 0 : scaledBorderSize;
 
     float matrix[9];
     wlr_matrix_project_box(matrix, box, wlr_output_transform_invert(!m_bEndFrame ? WL_OUTPUT_TRANSFORM_NORMAL : m_RenderData.pMonitor->transform), 0, m_RenderData.pMonitor->output->transform_matrix);  // TODO: write own, don't use WLR here
@@ -858,7 +888,13 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CColor& col, int round) {
     wlr_matrix_transpose(glMatrix, glMatrix);
     glUniformMatrix3fv(m_RenderData.pCurrentMonData->m_shBORDER1.proj, 1, GL_FALSE, glMatrix);
 #endif
-    glUniform4f(m_RenderData.pCurrentMonData->m_shBORDER1.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);
+
+    static_assert(sizeof(CColor) == 4 * sizeof(float)); // otherwise the line below this will fail
+
+    glUniform4fv(m_RenderData.pCurrentMonData->m_shBORDER1.gradient, grad.m_vColors.size(), (float*)grad.m_vColors.data());
+    glUniform1i(m_RenderData.pCurrentMonData->m_shBORDER1.gradientLength, grad.m_vColors.size());
+    glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.angle, (int)(grad.m_fAngle / (PI / 180.0)) % 360 * (PI / 180.0));
+    glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.alpha, a);
 
     wlr_box transformedBox;
     wlr_box_transform(&transformedBox, box, wlr_output_transform_invert(m_RenderData.pMonitor->transform),
@@ -868,8 +904,8 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CColor& col, int round) {
     const auto FULLSIZE = Vector2D(transformedBox.width, transformedBox.height);
 
     glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.topLeft, (float)TOPLEFT.x, (float)TOPLEFT.y);
-    //glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.bottomRight, (float)BOTTOMRIGHT.x, (float)BOTTOMRIGHT.y);
     glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.fullSize, (float)FULLSIZE.x, (float)FULLSIZE.y);
+    glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.fullSizeUntransformed, (float)box->width, (float)box->height);
     glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.radius, round);
     glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.thick, scaledBorderSize);
     glUniform1i(m_RenderData.pCurrentMonData->m_shBORDER1.primitiveMultisample, *PMULTISAMPLE);
@@ -906,6 +942,12 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CColor& col, int round) {
     glDisableVertexAttribArray(m_RenderData.pCurrentMonData->m_shBORDER1.texAttrib);
 
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    // fix back box
+    box->x += scaledBorderSize;
+    box->y += scaledBorderSize;
+    box->width -= 2 * scaledBorderSize;
+    box->height -= 2 * scaledBorderSize;
 }
 
 void CHyprOpenGLImpl::makeRawWindowSnapshot(CWindow* pWindow, CFramebuffer* pFramebuffer) {
@@ -1072,29 +1114,11 @@ void CHyprOpenGLImpl::makeLayerSnapshot(SLayerSurface* pLayer) {
 }
 
 void CHyprOpenGLImpl::onWindowResizeStart(CWindow* pWindow) {
-    static auto *const PTRANSITIONS = &g_pConfigManager->getConfigValuePtr("animations:use_resize_transitions")->intValue;
-    static auto *const PENABLED = &g_pConfigManager->getConfigValuePtr("animations:enabled")->intValue;
 
-    if (!*PTRANSITIONS || !*PENABLED)
-        return;
-
-    if (pWindow->m_vRealSize.vec().x < 5 || pWindow->m_vRealSize.vec().y < 5)
-        return;
-
-    // make a fb and render a snapshot
-    const auto PFRAMEBUFFER = &m_mWindowResizeFramebuffers[pWindow];
-    makeRawWindowSnapshot(pWindow, PFRAMEBUFFER);
 }
 
 void CHyprOpenGLImpl::onWindowResizeEnd(CWindow* pWindow) {
-    static auto *const PTRANSITIONS = &g_pConfigManager->getConfigValuePtr("animations:use_resize_transitions")->intValue;
-    static auto *const PENABLED = &g_pConfigManager->getConfigValuePtr("animations:enabled")->intValue;
 
-    if (!*PTRANSITIONS || !*PENABLED)
-        return;
-
-    // remove the fb
-    m_mWindowResizeFramebuffers.erase(pWindow);
 }
 
 void CHyprOpenGLImpl::renderSnapshot(CWindow** pWindow) {
