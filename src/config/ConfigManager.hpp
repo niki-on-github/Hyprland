@@ -216,6 +216,7 @@ private:
     void                handleBezier(const std::string&, const std::string&);
     void                handleAnimation(const std::string&, const std::string&);
     void                handleSource(const std::string&, const std::string&);
+    void                handleSourceV2(const std::string&, const std::string&);
     void                handleSubmap(const std::string&, const std::string&);
     void                handleBlurLS(const std::string&, const std::string&);
     void                handleBindWS(const std::string&, const std::string&);
