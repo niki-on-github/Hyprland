@@ -77,6 +77,7 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:blur_passes"].intValue = 1;
     configValues["decoration:blur_ignore_opacity"].intValue = 0;
     configValues["decoration:blur_new_optimizations"].intValue = 1;
+    configValues["decoration:blur_xray"].intValue = 0;
     configValues["decoration:active_opacity"].floatValue = 1;
     configValues["decoration:inactive_opacity"].floatValue = 1;
     configValues["decoration:fullscreen_opacity"].floatValue = 1;
@@ -92,6 +93,7 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:col.shadow_inactive"].intValue = INT_MAX;
     configValues["decoration:dim_inactive"].intValue = 0;
     configValues["decoration:dim_strength"].floatValue = 0.5f;
+    configValues["decoration:screen_shader"].strValue = STRVAL_EMPTY;
 
     configValues["dwindle:pseudotile"].intValue = 0;
     configValues["dwindle:col.group_border"].intValue = 0x66777700;
@@ -402,6 +404,21 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
                 UNREACHABLE();
             }
         }
+    }
+
+    if (COMMAND == "decoration:screen_shader") {
+        const auto PATH = absolutePath(VALUE, configCurrentPath);
+
+        configPaths.push_back(PATH);
+
+        struct stat fileStat;
+        int err = stat(PATH.c_str(), &fileStat);
+        if (err != 0) {
+            Debug::log(WARN, "Error at ticking config at %s, error %i: %s", PATH.c_str(), err, strerror(err));
+            return;
+        }
+
+        configModifyTimes[PATH] = fileStat.st_mtime;
     }
 }
 
@@ -733,6 +750,7 @@ bool windowRuleValid(const std::string& RULE) {
         && RULE != "forceinput"
         && RULE != "fullscreen"
         && RULE != "nofullscreenrequest"
+        && RULE != "nomaxsize"
         && RULE != "pin"
         && RULE != "noanim"
         && RULE != "windowdance"
@@ -886,7 +904,7 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
 void CConfigManager::handleBlurLS(const std::string& command, const std::string& value) {
     if (value.find("remove,") == 0) {
         const auto TOREMOVE = removeBeginEndSpacesTabs(value.substr(7));
-        m_dBlurLSNamespaces.erase(std::remove(m_dBlurLSNamespaces.begin(), m_dBlurLSNamespaces.end(), TOREMOVE));
+        std::erase_if(m_dBlurLSNamespaces, [&] (const auto& other) { return other == TOREMOVE; });
         return;
     }
 
@@ -1020,7 +1038,7 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
 
         // invalidate layouts if they changed
         if (needsLayoutRecalc) {
-            if (needsLayoutRecalc == 1 || VALUE.find("gaps_") || VALUE.find("dwindle:") == 0 || VALUE.find("master:") == 0) {
+            if (needsLayoutRecalc == 1 || COMMAND.contains("gaps_") || COMMAND.find("dwindle:") == 0 || COMMAND.find("master:") == 0) {
                 for (auto& m : g_pCompositor->m_vMonitors)
                     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
             }
@@ -1231,6 +1249,9 @@ void CConfigManager::loadConfigLoadVars() {
     // Calculate the internal vars
     configValues["general:main_mod_internal"].intValue = g_pKeybindManager->stringToModMask(configValues["general:main_mod"].strValue);
 
+    if (!isFirstLaunch)
+        g_pHyprOpenGL->m_bReloadScreenShader = true;
+
     // parseError will be displayed next frame
     if (parseError != "")
         g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(255, 50, 50, 255));
@@ -1244,9 +1265,8 @@ void CConfigManager::loadConfigLoadVars() {
     // and they'll be taken care of in the newMonitor event
     // ignore if nomonitorreload is set
     if (!isFirstLaunch && !m_bNoMonitorReload) {
-        m_bWantsMonitorReload = true;
-
         // check
+        performMonitorReload();
         ensureDPMS();
         ensureVRR();
     }
@@ -1315,13 +1335,10 @@ SConfigValue CConfigManager::getConfigValueSafe(const std::string& val) {
 SConfigValue CConfigManager::getConfigValueSafeDevice(const std::string& dev, const std::string& val) {
     std::lock_guard<std::mutex> lg(configmtx);
 
-    auto devcopy = dev;
-    std::replace(devcopy.begin(), devcopy.end(), ' ', '-');
-
-    const auto it = deviceConfigs.find(devcopy);
+    const auto it = deviceConfigs.find(dev);
 
     if (it == deviceConfigs.end()) {
-        Debug::log(ERR, "getConfigValueSafeDevice: No device config for %s found???", devcopy.c_str());
+        Debug::log(ERR, "getConfigValueSafeDevice: No device config for %s found???", dev.c_str());
         return SConfigValue();
     }
 
@@ -1557,6 +1574,9 @@ void CConfigManager::performMonitorReload() {
     if (overAgain)
         performMonitorReload();
 
+    if (!g_pCompositor->m_vMonitors.empty()) // reset unsafe state if we have monitors
+        g_pCompositor->m_bUnsafeState = false;
+
     m_bWantsMonitorReload = false;
 }
 
@@ -1653,6 +1673,8 @@ SAnimationPropertyConfig* CConfigManager::getAnimationPropertyConfig(const std::
 void CConfigManager::addParseError(const std::string& err) {
     if (parseError == "")
         parseError = err;
+
+    g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(255, 50, 50, 255));
 }
 
 CMonitor* CConfigManager::getBoundMonitorForWS(std::string wsname) {

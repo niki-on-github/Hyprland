@@ -73,20 +73,20 @@ void main() {
 	    if (primitiveMultisample == 1 && (dist > radius - 1.0 || dist < radius - thick + 1.0)) {
 	        float distances = 0.0;
             float len = length(pixCoord + vec2(0.25, 0.25));
-	        distances += float(len < radius + 0.5 && len > radius - thick);
+	        distances += float(len < radius && len > radius - thick);
             len = length(pixCoord + vec2(0.75, 0.25));
-            distances += float(len < radius + 0.5 && len > radius - thick);
+            distances += float(len < radius && len > radius - thick);
             len = length(pixCoord + vec2(0.25, 0.75));
-            distances += float(len < radius + 0.5 && len > radius - thick);
+            distances += float(len < radius && len > radius - thick);
             len = length(pixCoord + vec2(0.75, 0.75));
-            distances += float(len < radius + 0.5 && len > radius - thick);
+            distances += float(len < radius && len > radius - thick);
 
 	        if (distances == 0.0)
 		        discard;
 
 	        distances /= 4.0;
 
-	        pixColor = pixColor * distances;
+	        pixColor[3] *= distances;
         } else if (dist > radius || dist < radius - thick)
             discard;
 
@@ -111,8 +111,9 @@ void main() {
     if (pixColor[3] == 0.0)
         discard;
 
-    pixColor = getColorForCoord(v_texcoord) * pixColor[3];
-    pixColor[3] *= alpha;
+    float pixColor3 = pixColor[3];
+    pixColor = getColorForCoord(v_texcoord);
+    pixColor[3] *= alpha * pixColor3;
 
     gl_FragColor = pixColor;
 }

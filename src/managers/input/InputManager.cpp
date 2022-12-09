@@ -297,12 +297,16 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
         m_bLastFocusOnLS = false;
     } else {
+        if (pFoundLayerSurface) {
+            m_bLastFocusOnLS = true;
+            if (pFoundLayerSurface->layer <= ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM) {
+                g_pCompositor->focusWindow(nullptr);
+            }
+        }
+        
         if (pFoundLayerSurface && pFoundLayerSurface->layerSurface->current.keyboard_interactive && *PFOLLOWMOUSE != 3 && allowKeyboardRefocus) {
             g_pCompositor->focusSurface(foundSurface);
         }
-
-        if (pFoundLayerSurface)
-            m_bLastFocusOnLS = true;
     }
 
     wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, foundSurface, surfaceLocal.x, surfaceLocal.y);
@@ -378,13 +382,7 @@ void CInputManager::setClickMode(eClickBehaviorMode mode) {
 }
 
 void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
-    const auto PKEYBOARD = wlr_seat_get_keyboard(g_pCompositor->m_sSeat.seat);
-
-    if (!PKEYBOARD) {  // ???
-        Debug::log(ERR, "No active keyboard in processMouseDownNormal??");
-        return;
-    }
-
+    
     // notify the keybind manager
     static auto *const PPASSMOUSE = &g_pConfigManager->getConfigValuePtr("binds:pass_mouse_when_bound")->intValue;
     const auto PASS = g_pKeybindManager->onMouseEvent(e);
@@ -465,7 +463,7 @@ void CInputManager::newKeyboard(wlr_input_device* keyboard) {
     PNEWKEYBOARD->keyboard = keyboard;
 
     try {
-        PNEWKEYBOARD->name = std::string(keyboard->name);
+        PNEWKEYBOARD->name = getNameForNewDevice(keyboard->name);
     } catch (std::exception& e) {
         Debug::log(ERR, "Keyboard had no name???");  // logic error
     }
@@ -501,7 +499,7 @@ void CInputManager::newVirtualKeyboard(wlr_input_device* keyboard) {
     PNEWKEYBOARD->isVirtual = true;
 
     try {
-        PNEWKEYBOARD->name = std::string(keyboard->name);
+        PNEWKEYBOARD->name = getNameForNewDevice(keyboard->name);
     } catch (std::exception& e) {
         Debug::log(ERR, "Keyboard had no name???");  // logic error
     }
@@ -538,7 +536,6 @@ void CInputManager::setKeyboardLayout() {
 
 void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
     auto devname = pKeyboard->name;
-    transform(devname.begin(), devname.end(), devname.begin(), ::tolower);
 
     const auto HASCONFIG = g_pConfigManager->deviceConfigExists(devname);
 
@@ -662,7 +659,7 @@ void CInputManager::newMouse(wlr_input_device* mouse, bool virt) {
     PMOUSE->mouse = mouse;
     PMOUSE->virt = virt;
     try {
-        PMOUSE->name = std::string(mouse->name);
+        PMOUSE->name = getNameForNewDevice(mouse->name);
     } catch(std::exception& e) {
         Debug::log(ERR, "Mouse had no name???"); // logic error
     }
@@ -693,7 +690,6 @@ void CInputManager::setPointerConfigs() {
         const auto PPOINTER = &m;
 
         auto devname = PPOINTER->name;
-        transform(devname.begin(), devname.end(), devname.begin(), ::tolower);
 
         const auto HASCONFIG = g_pConfigManager->deviceConfigExists(devname);
 
@@ -1016,24 +1012,20 @@ void Events::listener_commitConstraint(void* owner, void* data) {
     //g_pInputManager->recheckConstraint((SMouse*)owner);
 }
 
-void CInputManager::updateCapabilities(wlr_input_device* pDev) {
-    // TODO: this is dumb
+void CInputManager::updateCapabilities() {
+    uint32_t caps = 0;
 
-    switch (pDev->type) {
-        case WLR_INPUT_DEVICE_KEYBOARD:
-            m_uiCapabilities |= WL_SEAT_CAPABILITY_KEYBOARD;
-            break;
-        case WLR_INPUT_DEVICE_POINTER:
-            m_uiCapabilities |= WL_SEAT_CAPABILITY_POINTER;
-            break;
-        case WLR_INPUT_DEVICE_TOUCH:
-            m_uiCapabilities |= WL_SEAT_CAPABILITY_TOUCH;
-            break;
-        default:
-            break;
-    }
+    if (!m_lKeyboards.empty())
+        caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+    if (!m_lMice.empty())
+        caps |= WL_SEAT_CAPABILITY_POINTER;
+    if (!m_lTouchDevices.empty())
+        caps |= WL_SEAT_CAPABILITY_TOUCH;
+    if (!m_lTabletTools.empty())
+        caps |= WL_SEAT_CAPABILITY_POINTER;
 
-    wlr_seat_set_capabilities(g_pCompositor->m_sSeat.seat, m_uiCapabilities);
+    wlr_seat_set_capabilities(g_pCompositor->m_sSeat.seat, caps);
+    m_uiCapabilities = caps;
 }
 
 uint32_t CInputManager::accumulateModsFromAllKBs() {
@@ -1084,7 +1076,7 @@ void CInputManager::newTouchDevice(wlr_input_device* pDevice) {
     PNEWDEV->pWlrDevice = pDevice;
 
     try {
-        PNEWDEV->name = std::string(pDevice->name);
+        PNEWDEV->name = getNameForNewDevice(pDevice->name);
     } catch(std::exception& e) {
         Debug::log(ERR, "Touch Device had no name???"); // logic error
     }
@@ -1138,18 +1130,15 @@ void CInputManager::setTouchDeviceConfigs() {
     for (auto& m : m_lTouchDevices) {
         const auto PTOUCHDEV = &m;
 
-        auto devname = PTOUCHDEV->name;
-        transform(devname.begin(), devname.end(), devname.begin(), ::tolower);
-
-        const auto HASCONFIG = g_pConfigManager->deviceConfigExists(devname);
+        const auto HASCONFIG = g_pConfigManager->deviceConfigExists(PTOUCHDEV->name);
 
         if (wlr_input_device_is_libinput(m.pWlrDevice)) {
             const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(m.pWlrDevice);
 
-            const int ROTATION = std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(devname, "touch_transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
+            const int ROTATION = std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "touch_transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
             libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
-            const auto OUTPUT = HASCONFIG ? g_pConfigManager->getDeviceString(devname, "touch_output") : g_pConfigManager->getString("input:touchdevice:output");
+            const auto OUTPUT = HASCONFIG ? g_pConfigManager->getDeviceString(PTOUCHDEV->name, "touch_output") : g_pConfigManager->getString("input:touchdevice:output");
             if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY)
                 PTOUCHDEV->boundOutput = OUTPUT;
             else
@@ -1202,4 +1191,36 @@ void CInputManager::unsetCursorImage() {
     m_bCursorImageOverriden = false;
     if (!g_pHyprRenderer->m_bWindowRequestedCursorHide)
         wlr_xcursor_manager_set_cursor_image(g_pCompositor->m_sWLRXCursorMgr, "left_ptr", g_pCompositor->m_sWLRCursor);
+}
+
+std::string CInputManager::deviceNameToInternalString(std::string in) {
+    std::replace(in.begin(), in.end(), ' ', '-');
+    std::transform(in.begin(), in.end(), in.begin(), ::tolower);
+    return in;
+}
+
+std::string CInputManager::getNameForNewDevice(std::string internalName) {
+
+    auto proposedNewName = deviceNameToInternalString(internalName);
+    int dupeno = 0;
+
+    while (std::find_if(m_lKeyboards.begin(), m_lKeyboards.end(), [&] (const SKeyboard& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lKeyboards.end())
+        dupeno++;
+
+    while (std::find_if(m_lMice.begin(), m_lMice.end(), [&] (const SMouse& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lMice.end())
+        dupeno++;
+
+    while (std::find_if(m_lTouchDevices.begin(), m_lTouchDevices.end(), [&] (const STouchDevice& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lTouchDevices.end())
+        dupeno++;
+
+    while (std::find_if(m_lTabletPads.begin(), m_lTabletPads.end(), [&] (const STabletPad& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lTabletPads.end())
+        dupeno++;
+
+    while (std::find_if(m_lTablets.begin(), m_lTablets.end(), [&] (const STablet& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lTablets.end())
+        dupeno++;
+
+    while (std::find_if(m_lTabletTools.begin(), m_lTabletTools.end(), [&] (const STabletTool& other) { return other.name == proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); }) != m_lTabletTools.end())
+        dupeno++;
+
+    return proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno)));
 }

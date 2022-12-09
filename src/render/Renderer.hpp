@@ -23,6 +23,8 @@ enum eRenderPassMode {
     RENDER_PASS_POPUP
 };
 
+class CToplevelExportProtocolManager;
+
 class CHyprRenderer {
 public:
 
@@ -44,6 +46,7 @@ public:
     void                calculateUVForWindowSurface(CWindow*, wlr_surface*, bool main = false);
 
     bool                m_bWindowRequestedCursorHide = false;
+    bool                m_bBlockSurfaceFeedback = false;
     CWindow*            m_pLastScanout = nullptr;
 
     DAMAGETRACKINGMODES damageTrackingModeFromStr(const std::string&);
@@ -54,7 +57,7 @@ public:
 private:
     void                arrangeLayerArray(CMonitor*, const std::vector<std::unique_ptr<SLayerSurface>>&, bool, wlr_box*);
     void                renderWorkspaceWithFullscreenWindow(CMonitor*, CWorkspace*, timespec*);
-    void                renderWindow(CWindow*, CMonitor*, timespec*, bool, eRenderPassMode, bool ignorePosition = false);
+    void                renderWindow(CWindow*, CMonitor*, timespec*, bool, eRenderPassMode, bool ignorePosition = false, bool ignoreAllGeometry = false);
     void                renderLayer(SLayerSurface*, CMonitor*, timespec*);
     void                renderDragIcon(CMonitor*, timespec*);
     void                renderIMEPopup(SIMEPopup*, CMonitor*, timespec*);
@@ -63,6 +66,7 @@ private:
 
 
     friend class CHyprOpenGLImpl;
+    friend class CToplevelExportProtocolManager;
 };
 
 inline std::unique_ptr<CHyprRenderer> g_pHyprRenderer;

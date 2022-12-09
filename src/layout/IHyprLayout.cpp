@@ -21,6 +21,9 @@ void IHyprLayout::onWindowCreated(CWindow* pWindow) {
 }
 
 void IHyprLayout::onWindowRemoved(CWindow* pWindow) {
+    if (pWindow->m_bIsFullscreen)
+        g_pCompositor->setWindowFullscreen(pWindow, false, FULLSCREEN_FULL);
+
     if (pWindow->m_bIsFloating) {
         onWindowRemovedFloating(pWindow);
     } else {
@@ -129,15 +132,12 @@ void IHyprLayout::onBeginDragWindow() {
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(DRAGGINGWINDOW->m_iWorkspaceID);
 
-    if (PWORKSPACE->m_bHasFullscreenWindow) {
-        Debug::log(LOG, "Rejecting drag on a fullscreen workspace.");
+    if (PWORKSPACE->m_bHasFullscreenWindow && (!DRAGGINGWINDOW->m_bCreatedOverFullscreen || !DRAGGINGWINDOW->m_bIsFloating)) {
+        Debug::log(LOG, "Rejecting drag on a fullscreen workspace. (window under fullscreen)");
         return;
     }
 
     g_pInputManager->setCursorImageUntilUnset("hand1");
-
-    DRAGGINGWINDOW->m_vRealPosition.setConfig(g_pConfigManager->getAnimationPropertyConfig("windowsMove"));
-    DRAGGINGWINDOW->m_vRealSize.setConfig(g_pConfigManager->getAnimationPropertyConfig("windowsMove"));
 
     DRAGGINGWINDOW->m_bDraggingTiled = false;
 

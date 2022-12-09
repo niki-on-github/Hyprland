@@ -7,6 +7,16 @@
       url = "gitlab:wlroots/wlroots?host=gitlab.freedesktop.org";
       flake = false;
     };
+
+    xdph = {
+      url = "github:hyprwm/xdg-desktop-portal-hyprland";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    hyprland-protocols = {
+      url = "github:hyprwm/hyprland-protocols";
+      flake = false;
+    };
   };
 
   outputs = inputs @ {
@@ -26,7 +36,6 @@
         inherit system;
         overlays = [
           (_: prev: {
-            hwdata = prev.callPackage ./nix/hwdata.nix {};
             libdrm = prev.libdrm.overrideAttrs (old: rec {
               version = "2.4.114";
               src = prev.fetchurl {
@@ -60,6 +69,7 @@
         stdenv = prev.gcc12Stdenv;
         version = "0.18.0beta" + "+date=" + (mkDate (self.lastModifiedDate or "19700101")) + "_" + (self.shortRev or "dirty");
         wlroots = wlroots-hyprland;
+        inherit (inputs) hyprland-protocols;
       };
       hyprland-debug = hyprland.override {debug = true;};
       hyprland-no-hidpi = hyprland.override {hidpiXWayland = false;};
@@ -67,6 +77,10 @@
       waybar-hyprland = prev.waybar.overrideAttrs (oldAttrs: {
         mesonFlags = oldAttrs.mesonFlags ++ ["-Dexperimental=true"];
       });
+
+      xdg-desktop-portal-hyprland = inputs.xdph.packages.${prev.system}.default.override {
+        hyprland-share-picker = inputs.xdph.packages.${prev.system}.hyprland-share-picker.override {inherit hyprland;};
+      };
     };
 
     packages = genSystems (system:
@@ -78,6 +92,12 @@
     devShells = genSystems (system: {
       default = pkgsFor.${system}.mkShell.override {stdenv = pkgsFor.${system}.gcc12Stdenv;} {
         name = "hyprland-shell";
+        nativeBuildInputs = with pkgsFor.${system}; [
+          cmake
+        ];
+        buildInputs = [
+          self.packages.${system}.wlroots-hyprland
+        ];
         inputsFrom = [
           self.packages.${system}.wlroots-hyprland
           self.packages.${system}.hyprland
@@ -87,7 +107,7 @@
 
     formatter = genSystems (system: pkgsFor.${system}.alejandra);
 
-    nixosModules.default = import ./nix/module.nix self;
+    nixosModules.default = import ./nix/module.nix inputs;
     homeManagerModules.default = import ./nix/hm-module.nix self;
   };
 

@@ -22,7 +22,7 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 execute_process(
-    COMMAND sh -c "git show ${GIT_COMMIT_HASH} | head -n 5 | tail -n 1 | sed -s 's/#|\"//g'"
+    COMMAND sh -c "git show ${GIT_COMMIT_HASH} | head -n 5 | tail -n 1 | sed -e 's/#//g' -e 's/\"//g'"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_COMMIT_MESSAGE
     OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -97,6 +97,7 @@ target_link_libraries(Hyprland
         pthread
         ${CMAKE_THREAD_LIBS_INIT}
         ${CMAKE_SOURCE_DIR}/ext-workspace-unstable-v1-protocol.o
+        ${CMAKE_SOURCE_DIR}/hyprland-toplevel-export-v1-protocol.o
 )
 
 IF(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)

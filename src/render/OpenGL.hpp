@@ -82,7 +82,7 @@ public:
     void    renderRectWithDamage(wlr_box*, const CColor&, pixman_region32_t* damage, int round = 0);
     void    renderTexture(wlr_texture*, wlr_box*, float a, int round = 0, bool allowCustomUV = false);
     void    renderTexture(const CTexture&, wlr_box*, float a, int round = 0, bool discardOpaque = false, bool allowCustomUV = false);
-    void    renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0);
+    void    renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0, bool blockBlurOptimization = false);
     void    renderRoundedShadow(wlr_box*, int round, int range, float a = 1.0);
     void    renderBorder(wlr_box*, const CGradientValueData&, int round, float a = 1.0);
 
@@ -111,10 +111,14 @@ public:
     void    onWindowResizeStart(CWindow*);
     void    onWindowResizeEnd(CWindow*);
 
+    void    applyScreenShader(const std::string& path);
+
     SCurrentRenderData m_RenderData;
 
     GLint  m_iCurrentOutputFb = 0;
     GLint  m_iWLROutputFb = 0;
+
+    bool   m_bReloadScreenShader = true; // at launch it can be set
 
     CWindow* m_pCurrentWindow = nullptr; // hack to get the current rendered window
 
@@ -134,9 +138,12 @@ private:
 
     bool                    m_bFakeFrame = false;
     bool                    m_bEndFrame = false;
+    bool                    m_bApplyFinalShader = false;
 
-    GLuint                  createProgram(const std::string&, const std::string&);
-    GLuint                  compileShader(const GLuint&, std::string);
+    CShader                 m_sFinalScreenShader;
+
+    GLuint                  createProgram(const std::string&, const std::string&, bool dynamic = false);
+    GLuint                  compileShader(const GLuint&, std::string, bool dynamic = false);
     void                    createBGTextureForMonitor(CMonitor*);
     void                    initShaders();
 

@@ -20,7 +20,7 @@ void addViewCoords(void* pWindow, int* x, int* y) {
     *x += PWINDOW->m_vRealPosition.goalv().x;
     *y += PWINDOW->m_vRealPosition.goalv().y;
 
-    if (!PWINDOW->m_bIsX11) {
+    if (!PWINDOW->m_bIsX11 && PWINDOW->m_bIsMapped) {
         wlr_box geom;
         wlr_xdg_surface_get_geometry(PWINDOW->m_uSurface.xdg, &geom);
 
@@ -29,18 +29,12 @@ void addViewCoords(void* pWindow, int* x, int* y) {
     }
 }
 
-int setAnimToMove(void* data) {
-    const auto PWINDOW = (CWindow*)data;
-
+void setAnimToMove(void* data) {
     auto *const PANIMCFG = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
 
-    if (!g_pCompositor->windowValidMapped(PWINDOW))
-        return 0;
+    CAnimatedVariable* animvar = (CAnimatedVariable*)data;
 
-    PWINDOW->m_vRealPosition.setConfig(PANIMCFG);
-    PWINDOW->m_vRealSize.setConfig(PANIMCFG);
-
-    return 0;
+    animvar->setConfig(PANIMCFG);
 }
 
 void Events::listener_mapWindow(void* owner, void* data) {
@@ -172,6 +166,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
             requestsFullscreen = true;
         } else if (r.szRule == "windowdance") {
             PWINDOW->m_sAdditionalConfigData.windowDanceCompat = true;
+        } else if (r.szRule == "nomaxsize") {
+            PWINDOW->m_sAdditionalConfigData.noMaxSize = true;
         } else if (r.szRule == "forceinput") {
             PWINDOW->m_sAdditionalConfigData.forceAllowsInput = true;
         } else if (r.szRule == "pin") {
@@ -407,6 +403,11 @@ void Events::listener_mapWindow(void* owner, void* data) {
         PWINDOW->m_bX11ShouldntFocus = false;
     }
 
+    // check LS focus grab
+    const auto PLSFROMFOCUS = g_pCompositor->getLayerSurfaceFromSurface(g_pCompositor->m_pLastFocus);
+    if (PLSFROMFOCUS && PLSFROMFOCUS->layerSurface->current.keyboard_interactive)
+        PWINDOW->m_bNoInitialFocus = true;
+
     if (!PWINDOW->m_bNoFocus && !PWINDOW->m_bNoInitialFocus && PWINDOW->m_iX11Type != 2 && !workspaceSilent) {
         g_pCompositor->focusWindow(PWINDOW);
         PWINDOW->m_fActiveInactiveAlpha.setValueAndWarp(*PACTIVEALPHA);
@@ -444,8 +445,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
     PWINDOW->m_fAlpha.setValueAndWarp(0.f);
     PWINDOW->m_fAlpha = 255.f;
 
-    const auto TIMER = wl_event_loop_add_timer(g_pCompositor->m_sWLEventLoop, setAnimToMove, PWINDOW);
-    wl_event_source_timer_update(TIMER, PWINDOW->m_vRealPosition.getDurationLeftMs() + 5);
+    PWINDOW->m_vRealPosition.setCallbackOnEnd(setAnimToMove);
+    PWINDOW->m_vRealSize.setCallbackOnEnd(setAnimToMove);
 
     if (requestsFullscreen && !PWINDOW->m_bNoFullscreenRequest) {
         // fix fullscreen on requested (basically do a switcheroo)
@@ -554,6 +555,8 @@ void Events::listener_unmapWindow(void* owner, void* data) {
     Debug::log(LOG, "Window %x unmapped (class %s)", PWINDOW, g_pXWaylandManager->getAppIDClass(PWINDOW).c_str());
 
     g_pEventManager->postEvent(SHyprIPCEvent{"closewindow", getFormat("%x", PWINDOW)});
+
+    g_pProtocolManager->m_pToplevelExportProtocolManager->onWindowUnmap(PWINDOW);
 
     if (!PWINDOW->m_bIsX11) {
         Debug::log(LOG, "Unregistered late callbacks XDG");
@@ -703,6 +706,11 @@ void Events::listener_destroyWindow(void* owner, void* data) {
     }
 
     PWINDOW->m_bReadyToDelete = true;
+    
+    if (!PWINDOW->m_bFadingOut) {
+        g_pCompositor->removeWindowFromVectorSafe(PWINDOW); // most likely X11 unmanaged or sumn
+        Debug::log(LOG, "Unmapped window %x removed instantly", PWINDOW);
+    }
 }
 
 void Events::listener_setTitleWindow(void* owner, void* data) {

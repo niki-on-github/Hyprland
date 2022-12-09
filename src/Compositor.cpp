@@ -76,11 +76,10 @@ CCompositor::CCompositor() {
     wlr_renderer_init_wl_shm(m_sWLRRenderer, m_sWLDisplay);
 
     if (wlr_renderer_get_dmabuf_texture_formats(m_sWLRRenderer)) {
-        if (wlr_renderer_get_drm_fd(m_sWLRRenderer) >= 0) {
+        if (wlr_renderer_get_drm_fd(m_sWLRRenderer) >= 0)
             wlr_drm_create(m_sWLDisplay, m_sWLRRenderer);
-        }
 
-        m_sWLRLinuxDMABuf = wlr_linux_dmabuf_v1_create(m_sWLDisplay, m_sWLRRenderer);
+        m_sWLRLinuxDMABuf = wlr_linux_dmabuf_v1_create_with_renderer(m_sWLDisplay, 4, m_sWLRRenderer);
     }
 
     m_sWLRAllocator = wlr_allocator_autocreate(m_sWLRBackend, m_sWLRRenderer);
@@ -327,6 +326,9 @@ void CCompositor::startCompositor() {
     Debug::log(LOG, "Creating the XWaylandManager!");
     g_pXWaylandManager = std::make_unique<CHyprXWaylandManager>();
 
+    Debug::log(LOG, "Creating the ProtocolManager!");
+    g_pProtocolManager = std::make_unique<CProtocolManager>();
+
     Debug::log(LOG, "Creating the EventManager!");
     g_pEventManager = std::make_unique<CEventManager>();
     g_pEventManager->startThread();
@@ -343,22 +345,28 @@ void CCompositor::startCompositor() {
 
     initAllSignals();
 
-    m_szWLDisplaySocket = wl_display_add_socket_auto(m_sWLDisplay);
+    // get socket, avoid using 0
+    for (int candidate = 1; candidate <= 32; candidate++) {
+        if (wl_display_add_socket(m_sWLDisplay, ("wayland-" + std::to_string(candidate)).c_str()) >= 0) {
+            m_szWLDisplaySocket = "wayland-" + std::to_string(candidate);
+            break;
+        }
+    }
 
-    if (!m_szWLDisplaySocket) {
+    if (m_szWLDisplaySocket.empty()) {
         Debug::log(CRIT, "m_szWLDisplaySocket NULL!");
         wlr_backend_destroy(m_sWLRBackend);
         throw std::runtime_error("m_szWLDisplaySocket was null! (wl_display_add_socket_auto failed)");
     }
 
-    setenv("WAYLAND_DISPLAY", m_szWLDisplaySocket, 1);
+    setenv("WAYLAND_DISPLAY", m_szWLDisplaySocket.c_str(), 1);
 
     signal(SIGPIPE, SIG_IGN);
 
     if (m_sWLRSession /* Session-less Hyprland usually means a nest, don't update the env in that case */ && fork() == 0)
         execl("/bin/sh", "/bin/sh", "-c", "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE", nullptr);
 
-    Debug::log(LOG, "Running on WAYLAND_DISPLAY: %s", m_szWLDisplaySocket);
+    Debug::log(LOG, "Running on WAYLAND_DISPLAY: %s", m_szWLDisplaySocket.c_str());
 
     if (!wlr_backend_start(m_sWLRBackend)) {
         Debug::log(CRIT, "Backend did not start!");
@@ -430,7 +438,7 @@ CMonitor* CCompositor::getMonitorFromVector(const Vector2D& point) {
 void CCompositor::removeWindowFromVectorSafe(CWindow* pWindow) {
     if (windowExists(pWindow) && !pWindow->m_bFadingOut){
         if (pWindow->m_bIsX11 && pWindow->m_iX11Type == 2) {
-            m_dUnmanagedX11Windows.erase(std::remove_if(m_dUnmanagedX11Windows.begin(), m_dUnmanagedX11Windows.end(), [&](std::unique_ptr<CWindow>& el) { return el.get() == pWindow; }));
+            std::erase_if(m_dUnmanagedX11Windows, [&](std::unique_ptr<CWindow>& el) { return el.get() == pWindow; });
         }
 
         // if X11, also check its children
@@ -441,16 +449,16 @@ void CCompositor::removeWindowFromVectorSafe(CWindow* pWindow) {
                     continue;
 
                 if (w->m_pX11Parent == pWindow)
-                    m_vWindows.erase(std::remove_if(m_vWindows.begin(), m_vWindows.end(), [&](std::unique_ptr<CWindow>& el) { return el.get() == w.get(); }));
+                    std::erase_if(m_vWindows, [&](std::unique_ptr<CWindow>& el) { return el.get() == w.get(); });
             }
 
             for (auto& w : m_dUnmanagedX11Windows) {
                 if (w->m_pX11Parent == pWindow)
-                    m_dUnmanagedX11Windows.erase(std::remove_if(m_dUnmanagedX11Windows.begin(), m_dUnmanagedX11Windows.end(), [&](std::unique_ptr<CWindow>& el) { return el.get() == w.get(); }));
+                    std::erase_if(m_dUnmanagedX11Windows, [&](std::unique_ptr<CWindow>& el) { return el.get() == w.get(); });
             }
         }
 
-        m_vWindows.erase(std::remove_if(m_vWindows.begin(), m_vWindows.end(), [&](std::unique_ptr<CWindow>& el) { return el.get() == pWindow; }));
+        std::erase_if(m_vWindows, [&](std::unique_ptr<CWindow>& el) { return el.get() == pWindow; });
     }
 }
 
@@ -903,8 +911,21 @@ wlr_surface* CCompositor::vectorToLayerSurface(const Vector2D& pos, std::vector<
 
 CWindow* CCompositor::getWindowFromSurface(wlr_surface* pSurface) {
     for (auto& w : m_vWindows) {
+        if (!w->m_bIsMapped || w->m_bFadingOut || !w->m_bMappedX11)
+            continue;
+
         if (g_pXWaylandManager->getWindowSurface(w.get()) == pSurface)
             return w.get();
+    }
+
+    return nullptr;
+}
+
+CWindow* CCompositor::getWindowFromHandle(uint32_t handle) {
+    for (auto& w : m_vWindows) {
+        if ((uint32_t)(((uint64_t)w.get()) & 0xFFFFFFFF) == handle) {
+            return w.get();
+        }
     }
 
     return nullptr;
@@ -1050,8 +1071,9 @@ void CCompositor::cleanupFadingOut(const int& monid) {
 
             g_pHyprOpenGL->m_mWindowFramebuffers[w].release();
             g_pHyprOpenGL->m_mWindowFramebuffers.erase(w);
+            w->m_bFadingOut = false;
             removeWindowFromVectorSafe(w);
-            m_vWindowsFadingOut.erase(std::remove(m_vWindowsFadingOut.begin(), m_vWindowsFadingOut.end(), w));
+            std::erase(m_vWindowsFadingOut, w);
 
             Debug::log(LOG, "Cleanup: destroyed a window");
 
@@ -1428,11 +1450,11 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     // border
     const auto RENDERDATA = g_pLayoutManager->getCurrentLayout()->requestRenderHints(pWindow);
     if (RENDERDATA.isBorderColor)
-        setBorderColor(RENDERDATA.borderColor);
+        setBorderColor(RENDERDATA.borderColor * (1.f / 255.f));
     else
         setBorderColor(pWindow == m_pLastWindow ?
-                                            (pWindow->m_sSpecialRenderData.activeBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor)  * (1.f / 255.f)) : *ACTIVECOL) :
-                                            (pWindow->m_sSpecialRenderData.inactiveBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor)  * (1.f / 255.f)) : *INACTIVECOL));
+                                            (pWindow->m_sSpecialRenderData.activeBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor) * (1.f / 255.f)) : *ACTIVECOL) :
+                                            (pWindow->m_sSpecialRenderData.inactiveBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor) * (1.f / 255.f)) : *INACTIVECOL));
 
 
     // opacity
@@ -1562,7 +1584,8 @@ CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
             return nullptr;
         }
 
-        int offsetLeft = std::stoi(OFFSET) % m_vMonitors.size(); // no need to cycle more
+        int offsetLeft = std::stoi(OFFSET);
+        offsetLeft = offsetLeft < 0 ? -((-offsetLeft) % m_vMonitors.size()) : offsetLeft % m_vMonitors.size();
 
         int currentPlace = 0;
         for (int i = 0; i < (int)m_vMonitors.size(); i++) {

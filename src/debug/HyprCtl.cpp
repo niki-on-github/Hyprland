@@ -68,6 +68,34 @@ R"#({
     return result;
 }
 
+static std::string getGroupedData(CWindow* w, HyprCtl::eHyprCtlOutputFormat format) {
+    const bool isJson = format == HyprCtl::FORMAT_JSON;
+    if (g_pLayoutManager->getCurrentLayout()->getLayoutName() != "dwindle")
+        return isJson ? "" : "0";
+
+    SLayoutMessageHeader header;
+    header.pWindow = w;
+    const auto groupMembers = std::any_cast<std::deque<CWindow*>>(g_pLayoutManager->getCurrentLayout()->layoutMessage(header, "groupinfo"));
+    if (groupMembers.empty())
+        return isJson ? "" : "0";
+
+    const auto comma = isJson ? ", " : ",";
+    const auto fmt = isJson ? "\"0x%x\"" : "%x";
+    std::ostringstream result;
+
+    bool first = true;
+    for (auto& gw : groupMembers) {
+        if (first)
+            first = false;
+        else
+            result << comma;
+
+        result << getFormat(fmt, gw);
+    }
+
+    return result.str();
+}
+
 static std::string getWindowData(CWindow* w, HyprCtl::eHyprCtlOutputFormat format) {
     if (format == HyprCtl::FORMAT_JSON) {
         return getFormat(
@@ -87,7 +115,9 @@ R"#({
     "xwayland": %s,
     "pinned": %s,
     "fullscreen": %s,
-    "fullscreenMode": %i
+    "fullscreenMode": %i,
+    "grouped": [%s],
+    "swallowing": %s
 },)#",
                     w,
                     (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y,
@@ -101,11 +131,13 @@ R"#({
                     ((int)w->m_bIsX11 == 1 ? "true" : "false"),
                     (w->m_bPinned ? "true" : "false"),
                     (w->m_bIsFullscreen ? "true" : "false"),
-                    (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0)
+                    (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0),
+                    getGroupedData(w, format).c_str(),
+                    (w->m_pSwallowed ? getFormat("\"0x%x\"", w->m_pSwallowed).c_str() : "null")
                 );
     } else {
-        return getFormat("Window %x -> %s:\n\tat: %i,%i\n\tsize: %i,%i\n\tworkspace: %i (%s)\n\tfloating: %i\n\tmonitor: %i\n\tclass: %s\n\ttitle: %s\n\tpid: %i\n\txwayland: %i\n\tpinned: %i\n\tfullscreen: %i\n\tfullscreenmode: %i\n\n",
-                         w, w->m_szTitle.c_str(), (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y, (int)w->m_vRealSize.goalv().x, (int)w->m_vRealSize.goalv().y, w->m_iWorkspaceID, (w->m_iWorkspaceID == -1 ? "" : g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_szName.c_str() : std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID)).c_str()), (int)w->m_bIsFloating, w->m_iMonitorID, g_pXWaylandManager->getAppIDClass(w).c_str(), g_pXWaylandManager->getTitle(w).c_str(), w->getPID(), (int)w->m_bIsX11, (int)w->m_bPinned, (int)w->m_bIsFullscreen, (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0));
+        return getFormat("Window %x -> %s:\n\tat: %i,%i\n\tsize: %i,%i\n\tworkspace: %i (%s)\n\tfloating: %i\n\tmonitor: %i\n\tclass: %s\n\ttitle: %s\n\tpid: %i\n\txwayland: %i\n\tpinned: %i\n\tfullscreen: %i\n\tfullscreenmode: %i\n\tgrouped: %s\n\tswallowing: %x\n\n",
+                w, w->m_szTitle.c_str(), (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y, (int)w->m_vRealSize.goalv().x, (int)w->m_vRealSize.goalv().y, w->m_iWorkspaceID, (w->m_iWorkspaceID == -1 ? "" : g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_szName.c_str() : std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID)).c_str()), (int)w->m_bIsFloating, w->m_iMonitorID, g_pXWaylandManager->getAppIDClass(w).c_str(), g_pXWaylandManager->getTitle(w).c_str(), w->getPID(), (int)w->m_bIsX11, (int)w->m_bPinned, (int)w->m_bIsFullscreen, (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0), getGroupedData(w, format).c_str(), w->m_pSwallowed);
     }
 }
 
@@ -289,7 +321,7 @@ R"#(    {
         "defaultSpeed": %f
     },)#",
                 &m,
-                escapeJSONStrings(m.mouse->name).c_str(),
+                escapeJSONStrings(m.name).c_str(),
                 wlr_input_device_is_libinput(m.mouse) ? libinput_device_config_accel_get_default_speed((libinput_device*)wlr_libinput_get_device_handle(m.mouse)) : 0.f
             );
         }
@@ -314,7 +346,7 @@ R"#(    {
         "main": %s
     },)#",
                 &k,
-                escapeJSONStrings(k.keyboard->name).c_str(),
+                escapeJSONStrings(k.name).c_str(),
                 escapeJSONStrings(k.currentRules.rules).c_str(),
                 escapeJSONStrings(k.currentRules.model).c_str(),
                 escapeJSONStrings(k.currentRules.layout).c_str(),
@@ -343,7 +375,7 @@ R"#(    {
     },)#",
                 &d,
                 d.pTabletParent,
-                escapeJSONStrings(d.pTabletParent ? d.pTabletParent->wlrDevice ? d.pTabletParent->wlrDevice->name : "" : "").c_str()
+                escapeJSONStrings(d.pTabletParent ? d.pTabletParent->name : "").c_str()
             );
         }
 
@@ -354,7 +386,7 @@ R"#(    {
         "name": "%s"
     },)#",
                 &d,
-                escapeJSONStrings(d.wlrDevice ? d.wlrDevice->name : "").c_str()
+                escapeJSONStrings(d.name).c_str()
             );
         }
 
@@ -383,7 +415,7 @@ R"#(    {
         "name": "%s"
     },)#",
                 &d,
-                d.pWlrDevice ? d.pWlrDevice->name : ""
+                d.name.c_str()
             );
         }
 
@@ -416,24 +448,24 @@ R"#(    {
         result += "mice:\n";
 
         for (auto& m : g_pInputManager->m_lMice) {
-            result += getFormat("\tMouse at %x:\n\t\t%s\n\t\t\tdefault speed: %f\n", &m, m.mouse->name, (wlr_input_device_is_libinput(m.mouse) ? libinput_device_config_accel_get_default_speed((libinput_device*)wlr_libinput_get_device_handle(m.mouse)) : 0.f));
+            result += getFormat("\tMouse at %x:\n\t\t%s\n\t\t\tdefault speed: %f\n", &m, m.name.c_str(), (wlr_input_device_is_libinput(m.mouse) ? libinput_device_config_accel_get_default_speed((libinput_device*)wlr_libinput_get_device_handle(m.mouse)) : 0.f));
         }
 
         result += "\n\nKeyboards:\n";
 
         for (auto& k : g_pInputManager->m_lKeyboards) {
             const auto KM = g_pInputManager->getActiveLayoutForKeyboard(&k);
-            result += getFormat("\tKeyboard at %x:\n\t\t%s\n\t\t\trules: r \"%s\", m \"%s\", l \"%s\", v \"%s\", o \"%s\"\n\t\t\tactive keymap: %s\n\t\t\tmain: %s\n", &k, k.keyboard->name, k.currentRules.rules.c_str(), k.currentRules.model.c_str(), k.currentRules.layout.c_str(), k.currentRules.variant.c_str(), k.currentRules.options.c_str(), KM.c_str(), (k.active ? "yes" : "no"));
+            result += getFormat("\tKeyboard at %x:\n\t\t%s\n\t\t\trules: r \"%s\", m \"%s\", l \"%s\", v \"%s\", o \"%s\"\n\t\t\tactive keymap: %s\n\t\t\tmain: %s\n", &k, k.name.c_str(), k.currentRules.rules.c_str(), k.currentRules.model.c_str(), k.currentRules.layout.c_str(), k.currentRules.variant.c_str(), k.currentRules.options.c_str(), KM.c_str(), (k.active ? "yes" : "no"));
         }
 
         result += "\n\nTablets:\n";
 
         for (auto& d : g_pInputManager->m_lTabletPads) {
-            result += getFormat("\tTablet Pad at %x (belongs to %x -> %s)\n", &d, d.pTabletParent, d.pTabletParent ? d.pTabletParent->wlrDevice ? d.pTabletParent->wlrDevice->name : "" : "");
+            result += getFormat("\tTablet Pad at %x (belongs to %x -> %s)\n", &d, d.pTabletParent, d.pTabletParent ? d.pTabletParent->name.c_str() : "");
         }
 
         for (auto& d : g_pInputManager->m_lTablets) {
-            result += getFormat("\tTablet at %x:\n\t\t%s\n", &d, d.wlrDevice ? d.wlrDevice->name : "");
+            result += getFormat("\tTablet at %x:\n\t\t%s\n", &d, d.name.c_str());
         }
 
         for (auto& d : g_pInputManager->m_lTabletTools) {
@@ -443,7 +475,7 @@ R"#(    {
         result += "\n\nTouch:\n";
 
         for (auto& d : g_pInputManager->m_lTouchDevices) {
-            result += getFormat("\tTouch Device at %x:\n\t\t%s\n", &d, d.pWlrDevice ? d.pWlrDevice->name : "");
+            result += getFormat("\tTouch Device at %x:\n\t\t%s\n", &d, d.name.c_str());
         }
 
         result += "\n\nSwitches:\n";
@@ -548,6 +580,9 @@ std::string dispatchKeyword(std::string in) {
 
     if (COMMAND.contains("general:layout"))
         g_pLayoutManager->switchToLayout(g_pConfigManager->getString("general:layout"));  // update layout
+    
+    if (COMMAND.contains("decoration:screen_shader"))
+        g_pHyprOpenGL->m_bReloadScreenShader = true;
 
     Debug::log(LOG, "Hyprctl: keyword %s : %s", COMMAND.c_str(), VALUE.c_str());
 
@@ -678,6 +713,51 @@ std::string dispatchSetCursor(std::string request) {
 
     for (auto& m : g_pCompositor->m_vMonitors) {
         wlr_xcursor_manager_load(g_pCompositor->m_sWLRXCursorMgr, m->scale);
+    }
+
+    return "ok";
+}
+
+std::string switchXKBLayoutRequest(std::string request) {
+    CVarList vars(request, 0, ' ');
+
+    const auto KB = vars[1];
+    const auto CMD = vars[2];
+
+    // get kb
+    const auto PKEYBOARD = std::find_if(g_pInputManager->m_lKeyboards.begin(), g_pInputManager->m_lKeyboards.end(), [&] (const SKeyboard& other) { return other.name == g_pInputManager->deviceNameToInternalString(KB); });
+
+    if (PKEYBOARD == g_pInputManager->m_lKeyboards.end())
+        return "device not found";
+
+    const auto PWLRKEYBOARD = wlr_keyboard_from_input_device(PKEYBOARD->keyboard);
+    const auto LAYOUTS = xkb_keymap_num_layouts(PWLRKEYBOARD->keymap);
+    xkb_layout_index_t activeLayout = 0;
+    while (activeLayout < LAYOUTS) {
+        if (xkb_state_layout_index_is_active(PWLRKEYBOARD->xkb_state, activeLayout, XKB_STATE_LAYOUT_EFFECTIVE))
+            break;
+
+        activeLayout++;
+    }
+
+    if (CMD == "next") {
+        wlr_keyboard_notify_modifiers(PWLRKEYBOARD, PWLRKEYBOARD->modifiers.depressed, PWLRKEYBOARD->modifiers.latched, PWLRKEYBOARD->modifiers.locked, activeLayout > LAYOUTS ? 0 : activeLayout + 1);
+    } else if (CMD == "prev") {
+        wlr_keyboard_notify_modifiers(PWLRKEYBOARD, PWLRKEYBOARD->modifiers.depressed, PWLRKEYBOARD->modifiers.latched, PWLRKEYBOARD->modifiers.locked, activeLayout == 0 ? LAYOUTS - 1 : activeLayout - 1);
+    } else {
+        
+        int requestedLayout = 0;
+        try {
+            requestedLayout = std::stoi(CMD);
+        } catch (std::exception& e) {
+            return "invalid arg 2";
+        }
+
+        if (requestedLayout < 0 || (uint64_t)requestedLayout > LAYOUTS - 1) {
+            return "layout idx out of range of " + std::to_string(LAYOUTS);
+        }
+
+        wlr_keyboard_notify_modifiers(PWLRKEYBOARD, PWLRKEYBOARD->modifiers.depressed, PWLRKEYBOARD->modifiers.latched, PWLRKEYBOARD->modifiers.locked, requestedLayout);      
     }
 
     return "ok";
@@ -848,6 +928,8 @@ std::string getReply(std::string request) {
         return splashRequest();
     else if (request == "cursorpos")
         return cursorPosRequest(format);
+    else if (request.find("switchxkblayout") == 0)
+        return switchXKBLayoutRequest(request);
     else if (request.find("output") == 0)
         return dispatchOutput(request);
     else if (request.find("dispatch") == 0)

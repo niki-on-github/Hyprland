@@ -60,7 +60,7 @@ public:
     void            setTouchDeviceConfigs();
 
     void            updateDragIcon();
-    void            updateCapabilities(wlr_input_device*);
+    void            updateCapabilities();
 
     void            setClickMode(eClickBehaviorMode);
     eClickBehaviorMode getClickMode();
@@ -130,6 +130,9 @@ public:
     // for special cursors that we choose
     void            setCursorImageUntilUnset(std::string);
     void            unsetCursorImage();
+
+    std::string     deviceNameToInternalString(std::string);
+    std::string     getNameForNewDevice(std::string);
 
 private:
 

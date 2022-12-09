@@ -42,7 +42,7 @@ void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
             g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
         } else {
             if (RDATA->blur)
-                g_pHyprOpenGL->renderTextureWithBlur(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, surface, rounding);
+                g_pHyprOpenGL->renderTextureWithBlur(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, surface, rounding, RDATA->blockBlurOptimization);
             else
                 g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
         }
@@ -51,9 +51,10 @@ void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
         g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
     }
 
-    wlr_surface_send_frame_done(surface, RDATA->when);
-
-    wlr_presentation_surface_sampled_on_output(g_pCompositor->m_sWLRPresentation, surface, RDATA->output);
+    if (!g_pHyprRenderer->m_bBlockSurfaceFeedback) {
+        wlr_surface_send_frame_done(surface, RDATA->when);
+        wlr_presentation_surface_sampled_on_output(g_pCompositor->m_sWLRPresentation, surface, RDATA->output);
+    }
 
     // reset the UV, we might've set it above
     g_pHyprOpenGL->m_RenderData.primarySurfaceUVTopLeft = Vector2D(-1, -1);
@@ -215,7 +216,7 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
         g_pHyprError->draw();
 }
 
-void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec* time, bool decorate, eRenderPassMode mode, bool ignorePosition) {
+void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec* time, bool decorate, eRenderPassMode mode, bool ignorePosition, bool ignoreAllGeometry) {
     if (pWindow->isHidden())
         return;
 
@@ -235,6 +236,9 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
         renderdata.y = pMonitor->vecPosition.y;
     }
 
+    if (ignoreAllGeometry)
+        decorate = false;
+
     renderdata.surface = g_pXWaylandManager->getWindowSurface(pWindow);
     renderdata.w = std::max(pWindow->m_vRealSize.vec().x, 5.0); // clamp the size to min 5,
     renderdata.h = std::max(pWindow->m_vRealSize.vec().y, 5.0); // otherwise we'll have issues later with invalid boxes
@@ -242,9 +246,14 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
     renderdata.fadeAlpha = pWindow->m_fAlpha.fl() * (pWindow->m_bPinned ? 1.f : (PWORKSPACE->m_fAlpha.fl() / 255.f));
     renderdata.alpha = pWindow->m_fActiveInactiveAlpha.fl();
     renderdata.decorate = decorate && !pWindow->m_bX11DoesntWantBorders && (pWindow->m_bIsFloating ? *PNOFLOATINGBORDERS == 0 : true) && (!pWindow->m_bIsFullscreen || PWORKSPACE->m_efFullscreenMode != FULLSCREEN_FULL);
-    renderdata.rounding = pWindow->m_sAdditionalConfigData.rounding;
-    renderdata.blur = true; // if it shouldn't, it will be ignored later
+    renderdata.rounding = ignoreAllGeometry ? 0 : pWindow->m_sAdditionalConfigData.rounding;
+    renderdata.blur = !ignoreAllGeometry; // if it shouldn't, it will be ignored later
     renderdata.pWindow = pWindow;
+
+    if (ignoreAllGeometry) {
+        renderdata.alpha = 1.f;
+        renderdata.fadeAlpha = 255.f;
+    }
 
     // apply window special data
     if (pWindow->m_sSpecialRenderData.alphaInactive == -1)
@@ -349,6 +358,7 @@ void CHyprRenderer::renderLayer(SLayerSurface* pLayer, CMonitor* pMonitor, times
     renderdata.decorate = false;
     renderdata.w = pLayer->layerSurface->surface->current.width;
     renderdata.h = pLayer->layerSurface->surface->current.height;
+    renderdata.blockBlurOptimization = pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM || pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
     wlr_surface_for_each_surface(pLayer->layerSurface->surface, renderSurface, &renderdata);
 
     renderdata.squishOversized = false;  // don't squish popups
