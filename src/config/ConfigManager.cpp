@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <limits.h>
+#include <string.h>
 
 CConfigManager::CConfigManager() {
     configValues["general:col.active_border"].data = std::make_shared<CGradientValueData>(0xffffffff);
@@ -929,6 +931,19 @@ void CConfigManager::handleSubmap(const std::string& command, const std::string&
         m_szCurrentSubmap = submap;
 }
 
+void CConfigManager::handleSourceV2(const std::string& command, const std::string& rawpath) {
+    char hostname[HOST_NAME_MAX+1];
+    gethostname(hostname, HOST_NAME_MAX+1);
+
+    const auto ARGS = CVarList(rawpath);
+    const auto ruleHostName = ARGS[0];
+
+    if (strcmp(ruleHostName.c_str(), hostname) == 0) {
+        Debug::log(INFO, "Load sourcev2 %s", ARGS[1].c_str());
+        handleSource("source", ARGS[1]);
+    }
+}
+
 void CConfigManager::handleSource(const std::string& command, const std::string& rawpath) {
     if (rawpath.length() < 2) {
         Debug::log(ERR, "source= path garbage");
@@ -1024,6 +1039,7 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
     else if (COMMAND == "bezier") handleBezier(COMMAND, VALUE);
     else if (COMMAND == "animation") handleAnimation(COMMAND, VALUE);
     else if (COMMAND == "source") handleSource(COMMAND, VALUE);
+    else if (COMMAND == "sourcev2") handleSourceV2(COMMAND, VALUE);
     else if (COMMAND == "submap") handleSubmap(COMMAND, VALUE);
     else if (COMMAND == "blurls") handleBlurLS(COMMAND, VALUE);
     else if (COMMAND == "wsbind") handleBindWS(COMMAND, VALUE);
