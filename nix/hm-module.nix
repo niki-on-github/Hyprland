@@ -8,10 +8,12 @@ self: {
   defaultHyprlandPackage = self.packages.${pkgs.system}.default.override {
     enableXWayland = cfg.xwayland.enable;
     hidpiXWayland = cfg.xwayland.hidpi;
+    nvidiaPatches = cfg.nvidiaPatches;
   };
 in {
   options.wayland.windowManager.hyprland = {
     enable = lib.mkEnableOption "hyprland wayland compositor";
+
     package = lib.mkOption {
       type = with lib.types; nullOr package;
       default = defaultHyprlandPackage;
@@ -26,6 +28,7 @@ in {
         be done if you want to use the NixOS module to install Hyprland.
       '';
     };
+
     systemdIntegration = lib.mkOption {
       type = lib.types.bool;
       default = pkgs.stdenv.isLinux;
@@ -42,6 +45,18 @@ in {
         </itemizedlist>
       '';
     };
+
+    disableAutoreload = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      defaultText = lib.literalExpression "false";
+      example = lib.literalExpression "true";
+      description = ''
+        Whether to disable automatically reloading Hyprland's configuration when
+        rebuilding the Home Manager profile.
+      '';
+    };
+
     xwayland = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -59,8 +74,18 @@ in {
       };
     };
 
+    nvidiaPatches = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      defaultText = lib.literalExpression "false";
+      example = lib.liberalExpression "true";
+      description = ''
+        Patch wlroots for better Nvidia support.
+      '';
+    };
+
     extraConfig = lib.mkOption {
-      type = lib.types.lines;
+      type = lib.types.nullOr lib.types.lines;
       default = "";
       description = ''
         Extra configuration lines to add to ~/.config/hypr/hyprland.conf.
@@ -95,7 +120,7 @@ in {
       NIXOS_OZONE_WL = "1";
     };
 
-    xdg.configFile."hypr/hyprland.conf" = {
+    xdg.configFile."hypr/hyprland.conf" = lib.mkIf (cfg.extraConfig != null) {
       text =
         (lib.optionalString cfg.systemdIntegration ''
           exec-once=${pkgs.dbus}/bin/dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP && systemctl --user start hyprland-session.target
@@ -107,7 +132,8 @@ in {
           if cfg.package == null
           then defaultHyprlandPackage
           else cfg.package;
-      in "HYPRLAND_INSTANCE_SIGNATURE=$(ls -w 1 /tmp/hypr | tail -1) ${hyprlandPackage}/bin/hyprctl reload config-only";
+      in
+        lib.mkIf (!cfg.disableAutoreload) "HYPRLAND_INSTANCE_SIGNATURE=$(ls -w 1 /tmp/hypr | tail -1) ${hyprlandPackage}/bin/hyprctl reload config-only";
     };
 
     systemd.user.targets.hyprland-session = lib.mkIf cfg.systemdIntegration {

@@ -111,6 +111,16 @@ linux-dmabuf-unstable-v1-protocol.c:
 
 linux-dmabuf-unstable-v1-protocol.o: linux-dmabuf-unstable-v1-protocol.h
 
+wlr-foreign-toplevel-management-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) server-header \
+		protocols/wlr-foreign-toplevel-management-unstable-v1.xml $@
+
+wlr-foreign-toplevel-management-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		protocols/wlr-foreign-toplevel-management-unstable-v1.xml $@
+
+wlr-foreign-toplevel-management-unstable-v1-protocol.o: wlr-foreign-toplevel-management-unstable-v1-protocol.h
+
 legacyrenderer:
 	mkdir -p build && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DLEGACY_RENDERER:STRING=true -H./ -B./build -G Ninja
 	cmake --build ./build --config Release --target all -j$(shell nproc)
@@ -150,10 +160,10 @@ install:
 	cd hyprctl && make all && cd ..
 
 	mkdir -p /usr/share/wayland-sessions
-	cp ./example/hyprland.desktop /usr/share/wayland-sessions/
 	mkdir -p ${PREFIX}/bin
 	cp ./build/Hyprland ${PREFIX}/bin
 	cp ./hyprctl/hyprctl ${PREFIX}/bin
+	if [ ! -f /usr/share/wayland-sessions/hyprland.desktop ]; then cp ./example/hyprland.desktop /usr/share/wayland-sessions; fi
 	mkdir -p ${PREFIX}/share/hyprland
 	cp ./assets/wall_2K.png ${PREFIX}/share/hyprland
 	cp ./assets/wall_4K.png ${PREFIX}/share/hyprland
@@ -162,23 +172,8 @@ install:
 	install -Dm644 -t ${PREFIX}/share/man/man1 ./docs/*.1
 
 cleaninstall:
-	make clear
-	make fixwlr
-	cd ./subprojects/wlroots && meson build/ --buildtype=release && ninja -C build/ && cp ./build/libwlroots.so.12032 /usr/lib/ && cd ../..
-	make protocols
-	make release
-	cd hyprctl && make all && cd ..
-
-	mkdir -p /usr/share/wayland-sessions
-	mkdir -p ${PREFIX}/bin
-	cp ./build/Hyprland ${PREFIX}/bin
-	cp ./hyprctl/hyprctl ${PREFIX}/bin
-	mkdir -p ${PREFIX}/share/hyprland
-	cp ./assets/wall_2K.png ${PREFIX}/share/hyprland
-	cp ./assets/wall_4K.png ${PREFIX}/share/hyprland
-	cp ./assets/wall_8K.png ${PREFIX}/share/hyprland
-
-	install -Dm644 -t ${PREFIX}/share/man/man1 ./docs/*.1
+	echo -en "make cleaninstall has been DEPRECATED, you should avoid using it in the future.\nRunning make install instead...\n"
+	make install
 
 uninstall:
 	rm -f ${PREFIX}/share/wayland-sessions/hyprland.desktop
@@ -189,7 +184,7 @@ uninstall:
 	rm -f ${PREFIX}/share/man/man1/Hyprland.1
 	rm -f ${PREFIX}/share/man/man1/hyprctl.1
 
-protocols: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o wlr-screencopy-unstable-v1-protocol.o idle-protocol.o ext-workspace-unstable-v1-protocol.o pointer-constraints-unstable-v1-protocol.o tablet-unstable-v2-protocol.o wlr-output-power-management-unstable-v1-protocol.o linux-dmabuf-unstable-v1-protocol.o hyprland-toplevel-export-v1-protocol.o
+protocols: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o wlr-screencopy-unstable-v1-protocol.o idle-protocol.o ext-workspace-unstable-v1-protocol.o pointer-constraints-unstable-v1-protocol.o tablet-unstable-v2-protocol.o wlr-output-power-management-unstable-v1-protocol.o linux-dmabuf-unstable-v1-protocol.o hyprland-toplevel-export-v1-protocol.o wlr-foreign-toplevel-management-unstable-v1-protocol.o
 
 fixwlr:
 	sed -i -E 's/(soversion = 12)([^032]|$$)/soversion = 12032/g' subprojects/wlroots/meson.build
