@@ -339,7 +339,7 @@ void CCompositor::startCompositor() {
     //
 
     // firefox wont detect wl
-    setenv("MOZ_ENABLE_WAYLAND", "1", 1);
+    // setenv("MOZ_ENABLE_WAYLAND", "1", 1);
 
     setenv("XDG_CURRENT_DESKTOP", "Hyprland", 1);
 
