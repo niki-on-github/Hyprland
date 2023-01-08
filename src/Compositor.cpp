@@ -2,6 +2,9 @@
 #include "helpers/Splashes.hpp"
 #include <random>
 #include "debug/HyprCtl.hpp"
+#ifdef USES_SYSTEMD
+#include <systemd/sd-daemon.h> // for sd_notify
+#endif
 
 int handleCritSignal(int signo, void* data) {
     Debug::log(LOG, "Hyprland received signal %d", signo);
@@ -22,8 +25,15 @@ CCompositor::CCompositor() {
 
     setenv("HYPRLAND_INSTANCE_SIGNATURE", m_szInstanceSignature.c_str(), true);
 
+    if (!std::filesystem::exists("/tmp/hypr")) {
+        std::filesystem::create_directory("/tmp/hypr");
+        std::filesystem::permissions("/tmp/hypr", std::filesystem::perms::all, std::filesystem::perm_options::replace);
+    }
+
     const auto INSTANCEPATH = "/tmp/hypr/" + m_szInstanceSignature;
-    mkdir(INSTANCEPATH.c_str(), S_IRWXU | S_IRWXG);
+    std::filesystem::create_directory(INSTANCEPATH);
+    std::filesystem::permissions(INSTANCEPATH, std::filesystem::perms::group_all, std::filesystem::perm_options::replace);
+    std::filesystem::permissions(INSTANCEPATH, std::filesystem::perms::owner_all, std::filesystem::perm_options::add);
 
     Debug::init(m_szInstanceSignature);
 
@@ -39,7 +49,7 @@ CCompositor::CCompositor() {
 
     Debug::log(NONE, "\n\n"); // pad
 
-    Debug::log(INFO, "If you are crashing, or encounter any bugs, please consult https://github.com/hyprwm/Hyprland/wiki/Crashing-and-bugs\n\n");
+    Debug::log(INFO, "If you are crashing, or encounter any bugs, please consult https://wiki.hyprland.org/Crashes-and-Bugs/\n\n");
 
     setRandomSplash();
 
@@ -376,6 +386,15 @@ void CCompositor::startCompositor() {
     }
 
     wlr_xcursor_manager_set_cursor_image(m_sWLRXCursorMgr, "left_ptr", m_sWLRCursor);
+
+#ifdef USES_SYSTEMD
+    if (sd_booted() > 0)
+        // tell systemd that we are ready so it can start other bond, following, related units
+        sd_notify(0, "READY=1");
+   else
+        Debug::log(LOG, "systemd integration is baked in but system itself is not booted à la systemd!");
+#endif
+
 
     // This blocks until we are done.
     Debug::log(LOG, "Hyprland is ready, running the event loop!");
@@ -917,6 +936,9 @@ wlr_surface* CCompositor::vectorToLayerSurface(const Vector2D& pos, std::vector<
         }
 
         if (SURFACEAT) {
+            if (!pixman_region32_not_empty(&SURFACEAT->input_region))
+                continue;
+
             *ppLayerSurfaceFound = it->get();
             return SURFACEAT;
         }
@@ -995,28 +1017,23 @@ CWorkspace* CCompositor::getWorkspaceByID(const int& id) {
 }
 
 void CCompositor::sanityCheckWorkspaces() {
-    for (auto it = m_vWorkspaces.begin(); it != m_vWorkspaces.end(); ++it) {
+    auto it = m_vWorkspaces.begin();
+    while (it != m_vWorkspaces.end()) {
         const auto WINDOWSONWORKSPACE = getWindowsOnWorkspace((*it)->m_iID);
-
-        if ((WINDOWSONWORKSPACE == 0 && !isWorkspaceVisible((*it)->m_iID))) {
-            it = m_vWorkspaces.erase(it);
-
-            if (it == m_vWorkspaces.end())
-                break;
-
-            continue;
-        }
 
         if ((*it)->m_bIsSpecialWorkspace && WINDOWSONWORKSPACE == 0) {
             getMonitorFromID((*it)->m_iMonitorID)->specialWorkspaceID = 0;
 
             it = m_vWorkspaces.erase(it);
-
-            if (it == m_vWorkspaces.end())
-                break;
-
             continue;
         }
+
+        if ((WINDOWSONWORKSPACE == 0 && !isWorkspaceVisible((*it)->m_iID))) {
+            it = m_vWorkspaces.erase(it);
+            continue;
+        }
+
+        ++it;
     }
 }
 
@@ -1481,14 +1498,12 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
 
     // border
     const auto RENDERDATA = g_pLayoutManager->getCurrentLayout()->requestRenderHints(pWindow);
-    if (RENDERDATA.isBorderColor)
-        setBorderColor(RENDERDATA.borderColor * (1.f / 255.f));
+    if (RENDERDATA.isBorderGradient)
+        setBorderColor(*RENDERDATA.borderGradient);
     else
-        setBorderColor(
-            pWindow == m_pLastWindow ?
-                (pWindow->m_sSpecialRenderData.activeBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor) * (1.f / 255.f)) : *ACTIVECOL) :
-                (pWindow->m_sSpecialRenderData.inactiveBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor) * (1.f / 255.f)) :
-                                                                          *INACTIVECOL));
+        setBorderColor(pWindow == m_pLastWindow ?
+                           (pWindow->m_sSpecialRenderData.activeBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor)) : *ACTIVECOL) :
+                           (pWindow->m_sSpecialRenderData.inactiveBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor)) : *INACTIVECOL));
 
     // opacity
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
@@ -1669,8 +1684,6 @@ CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
                 }
             }
         }
-
-        Debug::log(ERR, "Error in getMonitorFromString: no such monitor");
     }
 
     return nullptr;
@@ -1811,13 +1824,13 @@ void CCompositor::setWindowFullscreen(CWindow* pWindow, bool on, eFullscreenMode
         if (w->m_iWorkspaceID == pWindow->m_iWorkspaceID) {
             w->m_bCreatedOverFullscreen = false;
             if (w.get() != pWindow && !w->m_bFadingOut && !w->m_bPinned)
-                w->m_fAlpha = pWindow->m_bIsFullscreen ? 0.f : 255.f;
+                w->m_fAlpha = pWindow->m_bIsFullscreen ? 0.f : 1.f;
         }
     }
 
     for (auto& ls : PMONITOR->m_aLayerSurfaceLists[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
         if (!ls->fadingOut)
-            ls->alpha = pWindow->m_bIsFullscreen && mode == FULLSCREEN_FULL ? 0.f : 255.f;
+            ls->alpha = pWindow->m_bIsFullscreen && mode == FULLSCREEN_FULL ? 0.f : 1.f;
     }
 
     g_pXWaylandManager->setWindowSize(pWindow, pWindow->m_vRealSize.goalv(), true);

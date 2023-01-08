@@ -1,5 +1,5 @@
 project('Hyprland', 'cpp', 'c',
-  version : '0.18.0beta',
+  version : run_command('jq', '-r', '.version', join_paths(meson.source_root(), 'props.json'), check: true).stdout().strip(),
   default_options : [
     'warning_level=2',
     'default_library=static',
@@ -48,6 +48,16 @@ have_xwayland = xcb_dep.found() and have_xwlr
 
 if not have_xwayland
 add_project_arguments('-DNO_XWAYLAND', language: 'cpp')
+endif
+
+systemd_dep = dependency('libsystemd', required: get_option('systemd'))
+
+if get_option('systemd').enabled() 
+  if systemd_dep.found()
+        add_project_arguments('-DUSES_SYSTEMD', language: 'cpp')
+  else 
+	error('Cannot enable systemd in Hyprland: libsystemd was not found')
+  endif
 endif
 
 if get_option('buildtype') == 'debug'

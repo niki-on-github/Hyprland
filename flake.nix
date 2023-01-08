@@ -8,14 +8,15 @@
       flake = false;
     };
 
-    xdph = {
-      url = "github:hyprwm/xdg-desktop-portal-hyprland";
+    hyprland-protocols = {
+      url = "github:hyprwm/hyprland-protocols";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    hyprland-protocols = {
-      url = "github:hyprwm/hyprland-protocols";
-      flake = false;
+    xdph = {
+      url = "github:hyprwm/xdg-desktop-portal-hyprland";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.hyprland-protocols.follows = "hyprland-protocols";
     };
   };
 
@@ -33,6 +34,8 @@
 
     pkgsFor = nixpkgs.legacyPackages;
 
+    props = builtins.fromJSON (builtins.readFile ./props.json);
+
     mkDate = longDate: (lib.concatStringsSep "-" [
       (builtins.substring 0 4 longDate)
       (builtins.substring 4 2 longDate)
@@ -46,9 +49,9 @@
       };
       hyprland = prev.callPackage ./nix/default.nix {
         stdenv = prev.gcc12Stdenv;
-        version = "0.18.0beta" + "+date=" + (mkDate (self.lastModifiedDate or "19700101")) + "_" + (self.shortRev or "dirty");
+        version = props.version + "+date=" + (mkDate (self.lastModifiedDate or "19700101")) + "_" + (self.shortRev or "dirty");
         wlroots = wlroots-hyprland;
-        inherit (inputs) hyprland-protocols;
+        inherit (inputs.hyprland-protocols.packages.${prev.hostPlatform.system}) hyprland-protocols;
       };
       hyprland-debug = hyprland.override {debug = true;};
       hyprland-no-hidpi = hyprland.override {hidpiXWayland = false;};
@@ -57,8 +60,8 @@
         mesonFlags = oldAttrs.mesonFlags ++ ["-Dexperimental=true"];
       });
 
-      xdg-desktop-portal-hyprland = inputs.xdph.packages.${prev.system}.default.override {
-        hyprland-share-picker = inputs.xdph.packages.${prev.system}.hyprland-share-picker.override {inherit hyprland;};
+      xdg-desktop-portal-hyprland = inputs.xdph.packages.${prev.hostPlatform.system}.default.override {
+        hyprland-share-picker = inputs.xdph.packages.${prev.hostPlatform.system}.hyprland-share-picker.override {inherit hyprland;};
       };
     };
 

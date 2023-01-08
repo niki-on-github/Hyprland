@@ -111,6 +111,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
     bool        requestsFullscreen = PWINDOW->m_bWantsInitialFullscreen ||
         (!PWINDOW->m_bIsX11 && PWINDOW->m_uSurface.xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL && PWINDOW->m_uSurface.xdg->toplevel->requested.fullscreen) ||
         (PWINDOW->m_bIsX11 && PWINDOW->m_uSurface.xwayland->fullscreen);
+    bool requestsMaximize = false;
     bool shouldFocus      = true;
     bool workspaceSpecial = false;
 
@@ -175,6 +176,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
             PWINDOW->m_sAdditionalConfigData.forceAllowsInput = true;
         } else if (r.szRule == "pin") {
             PWINDOW->m_bPinned = true;
+        } else if (r.szRule == "maximize") {
+            requestsMaximize = true;
         } else if (r.szRule.find("idleinhibit") == 0) {
             auto IDLERULE = r.szRule.substr(r.szRule.find_first_of(' ') + 1);
 
@@ -281,10 +284,10 @@ void Events::listener_mapWindow(void* owner, void* data) {
 
                     const auto SIZEX = SIZEXSTR == "max" ?
                         std::clamp(MAXSIZE.x, 20.0, PMONITOR->vecSize.x) :
-                        (!SIZEXSTR.contains('%') ? std::stoi(SIZEXSTR) : std::stoi(SIZEXSTR.substr(0, SIZEXSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
+                        (!SIZEXSTR.contains('%') ? std::stoi(SIZEXSTR) : std::stof(SIZEXSTR.substr(0, SIZEXSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
                     const auto SIZEY = SIZEYSTR == "max" ?
                         std::clamp(MAXSIZE.y, 20.0, PMONITOR->vecSize.y) :
-                        (!SIZEYSTR.contains('%') ? std::stoi(SIZEYSTR) : std::stoi(SIZEYSTR.substr(0, SIZEYSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
+                        (!SIZEYSTR.contains('%') ? std::stoi(SIZEYSTR) : std::stof(SIZEYSTR.substr(0, SIZEYSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
 
                     Debug::log(LOG, "Rule size, applying to window %x", PWINDOW);
 
@@ -340,21 +343,20 @@ void Events::listener_mapWindow(void* owner, void* data) {
                         const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
                         const auto POSXRAW  = POSXSTR.substr(5);
                         posX =
-                            PMONITOR->vecSize.x - (!POSXRAW.contains('%') ? std::stoi(POSXRAW) : std::stoi(POSXRAW.substr(0, POSXRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
-			
-			posX -= PWINDOW->m_vRealSize.goalv().x;
+                            PMONITOR->vecSize.x - (!POSXRAW.contains('%') ? std::stoi(POSXRAW) : std::stof(POSXRAW.substr(0, POSXRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
+                            posX -= PWINDOW->m_vRealSize.goalv().x;
 
                         if (CURSOR)
                             Debug::log(ERR, "Cursor is not compatible with 100%-, ignoring cursor!");
                     } else if (!CURSOR) {
-                        posX = !POSXSTR.contains('%') ? std::stoi(POSXSTR) : std::stoi(POSXSTR.substr(0, POSXSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.x;
+                        posX = !POSXSTR.contains('%') ? std::stoi(POSXSTR) : std::stof(POSXSTR.substr(0, POSXSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.x;
                     } else {
                         // cursor
                         if (POSXSTR == "cursor") {
                             posX = g_pInputManager->getMouseCoordsInternal().x - PMONITOR->vecPosition.x;
                         } else {
                             posX = g_pInputManager->getMouseCoordsInternal().x - PMONITOR->vecPosition.x +
-                                (!POSXSTR.contains('%') ? std::stoi(POSXSTR) : std::stoi(POSXSTR.substr(0, POSXSTR.length() - 1)) * 0.01 * PWINDOW->m_vRealSize.goalv().x);
+                                (!POSXSTR.contains('%') ? std::stoi(POSXSTR) : std::stof(POSXSTR.substr(0, POSXSTR.length() - 1)) * 0.01 * PWINDOW->m_vRealSize.goalv().x);
                         }
                     }
 
@@ -362,21 +364,21 @@ void Events::listener_mapWindow(void* owner, void* data) {
                         const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
                         const auto POSYRAW  = POSYSTR.substr(5);
                         posY =
-                            PMONITOR->vecSize.y - (!POSYRAW.contains('%') ? std::stoi(POSYRAW) : std::stoi(POSYRAW.substr(0, POSYRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
+                            PMONITOR->vecSize.y - (!POSYRAW.contains('%') ? std::stoi(POSYRAW) : std::stof(POSYRAW.substr(0, POSYRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
 
 			posY -= PWINDOW->m_vRealSize.goalv().y;
 
                         if (CURSOR)
                             Debug::log(ERR, "Cursor is not compatible with 100%-, ignoring cursor!");
                     } else if (!CURSOR) {
-                        posY = !POSYSTR.contains('%') ? std::stoi(POSYSTR) : std::stoi(POSYSTR.substr(0, POSYSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.y;
+                        posY = !POSYSTR.contains('%') ? std::stoi(POSYSTR) : std::stof(POSYSTR.substr(0, POSYSTR.length() - 1)) * 0.01 * PMONITOR->vecSize.y;
                     } else {
                         // cursor
                         if (POSYSTR == "cursor") {
                             posY = g_pInputManager->getMouseCoordsInternal().y - PMONITOR->vecPosition.y;
                         } else {
                             posY = g_pInputManager->getMouseCoordsInternal().y - PMONITOR->vecPosition.y +
-                                (!POSYSTR.contains('%') ? std::stoi(POSYSTR) : std::stoi(POSYSTR.substr(0, POSYSTR.length() - 1)) * 0.01 * PWINDOW->m_vRealSize.goalv().y);
+                                (!POSYSTR.contains('%') ? std::stoi(POSYSTR) : std::stof(POSYSTR.substr(0, POSYSTR.length() - 1)) * 0.01 * PWINDOW->m_vRealSize.goalv().y);
                         }
                     }
 
@@ -458,12 +460,12 @@ void Events::listener_mapWindow(void* owner, void* data) {
     // do the animation thing
     g_pAnimationManager->onWindowPostCreateClose(PWINDOW, false);
     PWINDOW->m_fAlpha.setValueAndWarp(0.f);
-    PWINDOW->m_fAlpha = 255.f;
+    PWINDOW->m_fAlpha = 1.f;
 
     PWINDOW->m_vRealPosition.setCallbackOnEnd(setAnimToMove);
     PWINDOW->m_vRealSize.setCallbackOnEnd(setAnimToMove);
 
-    if (requestsFullscreen && !PWINDOW->m_bNoFullscreenRequest) {
+    if ((requestsFullscreen || requestsMaximize) && !PWINDOW->m_bNoFullscreenRequest) {
         // fix fullscreen on requested (basically do a switcheroo)
         if (PWORKSPACE->m_bHasFullscreenWindow) {
             const auto PFULLWINDOW = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
@@ -473,7 +475,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
         PWINDOW->m_vRealPosition.warp();
         PWINDOW->m_vRealSize.warp();
 
-        g_pCompositor->setWindowFullscreen(PWINDOW, true, FULLSCREEN_FULL);
+        g_pCompositor->setWindowFullscreen(PWINDOW, true, requestsFullscreen ? FULLSCREEN_FULL : FULLSCREEN_MAXIMIZED);
     }
 
     if (pFullscreenWindow && workspaceSilent) {
@@ -765,18 +767,30 @@ void Events::listener_fullscreenWindow(void* owner, void* data) {
     if (PWINDOW->isHidden() || PWINDOW->m_bNoFullscreenRequest)
         return;
 
+    bool requestedFullState = false;
+
     if (!PWINDOW->m_bIsX11) {
         const auto REQUESTED = &PWINDOW->m_uSurface.xdg->toplevel->requested;
 
-        if (REQUESTED->fullscreen != PWINDOW->m_bIsFullscreen)
+        if (REQUESTED->fullscreen != PWINDOW->m_bIsFullscreen && !PWINDOW->m_bFakeFullscreenState)
             g_pCompositor->setWindowFullscreen(PWINDOW, REQUESTED->fullscreen, FULLSCREEN_FULL);
+
+        requestedFullState = REQUESTED->fullscreen;
 
         wlr_xdg_surface_schedule_configure(PWINDOW->m_uSurface.xdg);
     } else {
         if (!PWINDOW->m_uSurface.xwayland->mapped)
             return;
 
-        g_pCompositor->setWindowFullscreen(PWINDOW, PWINDOW->m_uSurface.xwayland->fullscreen, FULLSCREEN_FULL);
+        if (!PWINDOW->m_bFakeFullscreenState)
+            g_pCompositor->setWindowFullscreen(PWINDOW, PWINDOW->m_uSurface.xwayland->fullscreen, FULLSCREEN_FULL);
+
+        requestedFullState = PWINDOW->m_uSurface.xwayland->fullscreen;
+    }
+
+    if (!requestedFullState && PWINDOW->m_bFakeFullscreenState) {
+        g_pXWaylandManager->setWindowFullscreen(PWINDOW, false); // fixes for apps expecting a de-fullscreen (e.g. ff)
+        g_pXWaylandManager->setWindowFullscreen(PWINDOW, true);
     }
 
     PWINDOW->updateToplevel();

@@ -8,8 +8,7 @@
 #include <deque>
 #include "config/ConfigDataValues.hpp"
 
-enum eIdleInhibitMode
-{
+enum eIdleInhibitMode {
     IDLEINHIBIT_NONE = 0,
     IDLEINHIBIT_ALWAYS,
     IDLEINHIBIT_FULLSCREEN,
@@ -43,6 +42,7 @@ struct SWindowAdditionalConfigData {
     bool        forceNoShadow        = false;
     bool        windowDanceCompat    = false;
     bool        noMaxSize            = false;
+    bool        dimAround            = false;
 };
 
 struct SWindowRule {
@@ -156,6 +156,9 @@ class CWindow {
 
     // For pinned (sticky) windows
     bool m_bPinned = false;
+
+    // fakefullscreen
+    bool m_bFakeFullscreenState = false;
 
     // for proper cycling. While cycling we can't just move the pointers, so we need to keep track of the last cycled window.
     CWindow* m_pLastCycledWindow = nullptr;

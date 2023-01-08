@@ -11,10 +11,10 @@ CColor::CColor(float r, float g, float b, float a) {
 }
 
 CColor::CColor(uint64_t hex) {
-    this->r = RED(hex) * 255.f;
-    this->g = GREEN(hex) * 255.f;
-    this->b = BLUE(hex) * 255.f;
-    this->a = ALPHA(hex) * 255.f;
+    this->r = RED(hex);
+    this->g = GREEN(hex);
+    this->b = BLUE(hex);
+    this->a = ALPHA(hex);
 }
 
 uint64_t CColor::getAsHex() {

@@ -11,6 +11,7 @@ CKeybindManager::CKeybindManager() {
     m_mDispatchers["togglefloating"]                = toggleActiveFloating;
     m_mDispatchers["workspace"]                     = changeworkspace;
     m_mDispatchers["fullscreen"]                    = fullscreenActive;
+    m_mDispatchers["fakefullscreen"]                = fakeFullscreenActive;
     m_mDispatchers["movetoworkspace"]               = moveActiveToWorkspace;
     m_mDispatchers["movetoworkspacesilent"]         = moveActiveToWorkspaceSilent;
     m_mDispatchers["pseudo"]                        = toggleActivePseudo;
@@ -125,7 +126,7 @@ void CKeybindManager::updateXKBTranslationState() {
     if (!PKEYMAP) {
         g_pHyprError->queueCreate("[Runtime Error] Invalid keyboard layout passed. ( rules: " + RULES + ", model: " + MODEL + ", variant: " + VARIANT + ", options: " + OPTIONS +
                                       ", layout: " + LAYOUT + " )",
-                                  CColor(255, 50, 50, 255));
+                                  CColor(1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0));
 
         Debug::log(ERR, "[XKBTranslationState] Keyboard layout %s with variant %s (rules: %s, model: %s, options: %s) couldn't have been loaded.", rules.layout, rules.variant,
                    rules.rules, rules.model, rules.options);
@@ -1022,10 +1023,10 @@ void CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
     PWORKSPACE->m_fAlpha.setValueAndWarp(0.f);
 
     POLDWORKSPACEIDRETURN->m_vRenderOffset.setValueAndWarp(Vector2D(0, 0));
-    POLDWORKSPACEIDRETURN->m_fAlpha.setValueAndWarp(255.f);
+    POLDWORKSPACEIDRETURN->m_fAlpha.setValueAndWarp(1.f);
 
     POLDWORKSPACEONMON->m_vRenderOffset.setValueAndWarp(Vector2D(0, 0));
-    POLDWORKSPACEONMON->m_fAlpha.setValueAndWarp(255.f);
+    POLDWORKSPACEONMON->m_fAlpha.setValueAndWarp(1.f);
 
     g_pEventManager->m_bIgnoreEvents = false;
 
@@ -1823,4 +1824,13 @@ void CKeybindManager::mouse(std::string args) {
 void CKeybindManager::bringActiveToTop(std::string args) {
     if (g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bIsFloating)
         g_pCompositor->moveWindowToTop(g_pCompositor->m_pLastWindow);
+}
+
+void CKeybindManager::fakeFullscreenActive(std::string args) {
+    if (g_pCompositor->m_pLastWindow) {
+        // will also set the flag
+        g_pCompositor->m_pLastWindow->m_bFakeFullscreenState = !g_pCompositor->m_pLastWindow->m_bFakeFullscreenState;
+        g_pXWaylandManager->setWindowFullscreen(g_pCompositor->m_pLastWindow,
+                                                g_pCompositor->m_pLastWindow->m_bFakeFullscreenState || g_pCompositor->m_pLastWindow->m_bIsFullscreen);
+    }
 }

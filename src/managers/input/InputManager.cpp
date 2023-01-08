@@ -413,7 +413,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
 void CInputManager::processMouseDownKill(wlr_pointer_button_event* e) {
     switch (e->state) {
         case WLR_BUTTON_PRESSED: {
-            const auto PWINDOW = g_pCompositor->m_pLastWindow;
+            const auto PWINDOW = g_pCompositor->vectorToWindowIdeal(getMouseCoordsInternal());
 
             if (!PWINDOW) {
                 Debug::log(ERR, "Cannot kill invalid window!");
@@ -743,6 +743,11 @@ void CInputManager::setPointerConfigs() {
                 Debug::log(WARN, "Scroll method unknown");
             }
 
+            if ((HASCONFIG ? g_pConfigManager->getDeviceInt(devname, "tap-and-drag") : g_pConfigManager->getInt("input:touchpad:tap-and-drag")) == 0)
+                libinput_device_config_tap_set_drag_enabled(LIBINPUTDEV, LIBINPUT_CONFIG_DRAG_DISABLED);
+            else
+                libinput_device_config_tap_set_drag_enabled(LIBINPUTDEV, LIBINPUT_CONFIG_DRAG_ENABLED);
+
             if ((HASCONFIG ? g_pConfigManager->getDeviceInt(devname, "drag_lock") : g_pConfigManager->getInt("input:touchpad:drag_lock")) == 0)
                 libinput_device_config_tap_set_drag_lock_enabled(LIBINPUTDEV, LIBINPUT_CONFIG_DRAG_LOCK_DISABLED);
             else
@@ -809,9 +814,8 @@ void CInputManager::destroyKeyboard(SKeyboard* pKeyboard) {
         } else {
             m_pActiveKeyboard = nullptr;
         }
-    }
-
-    m_lKeyboards.remove(*pKeyboard);
+    } else
+        m_lKeyboards.remove(*pKeyboard);
 }
 
 void CInputManager::destroyMouse(wlr_input_device* mouse) {
@@ -1037,6 +1041,16 @@ void Events::listener_commitConstraint(void* owner, void* data) {
             PCONSTRAINT->hintSet      = true;
         }
     }
+
+    if (PMOUSE->currentConstraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_REGION) {
+        if (pixman_region32_not_empty(&PMOUSE->currentConstraint->current.region)) {
+            pixman_region32_intersect(&PMOUSE->currentConstraint->region, &PMOUSE->currentConstraint->surface->input_region, &PMOUSE->currentConstraint->current.region);
+        } else {
+            pixman_region32_copy(&PMOUSE->currentConstraint->region, &PMOUSE->currentConstraint->surface->input_region);
+        }
+
+        g_pInputManager->recheckConstraint(PMOUSE);
+    }
 }
 
 void CInputManager::updateCapabilities() {
@@ -1147,14 +1161,30 @@ void CInputManager::setTouchDeviceConfigs() {
             const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(m.pWlrDevice);
 
             const int  ROTATION =
-                std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "touch_transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
+                std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
             libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
-            const auto OUTPUT = HASCONFIG ? g_pConfigManager->getDeviceString(PTOUCHDEV->name, "touch_output") : g_pConfigManager->getString("input:touchdevice:output");
+            const auto OUTPUT = HASCONFIG ? g_pConfigManager->getDeviceString(PTOUCHDEV->name, "output") : g_pConfigManager->getString("input:touchdevice:output");
             if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY)
                 PTOUCHDEV->boundOutput = OUTPUT;
             else
                 PTOUCHDEV->boundOutput = "";
+        }
+    }
+}
+
+void CInputManager::setTabletConfigs() {
+    for (auto& t : m_lTablets) {
+        const auto HASCONFIG = g_pConfigManager->deviceConfigExists(t.name);
+
+        if (HASCONFIG) {
+            const auto OUTPUT   = g_pConfigManager->getDeviceString(t.name, "output");
+            const auto PMONITOR = g_pCompositor->getMonitorFromString(OUTPUT);
+
+            if (PMONITOR) {
+                wlr_cursor_map_input_to_output(g_pCompositor->m_sWLRCursor, t.wlrDevice, PMONITOR->output);
+                wlr_cursor_map_input_to_region(g_pCompositor->m_sWLRCursor, t.wlrDevice, nullptr);
+            }
         }
     }
 }

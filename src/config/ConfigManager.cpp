@@ -13,8 +13,10 @@
 #include <string.h>
 
 CConfigManager::CConfigManager() {
-    configValues["general:col.active_border"].data   = std::make_shared<CGradientValueData>(0xffffffff);
-    configValues["general:col.inactive_border"].data = std::make_shared<CGradientValueData>(0xff444444);
+    configValues["general:col.active_border"].data       = std::make_shared<CGradientValueData>(0xffffffff);
+    configValues["general:col.inactive_border"].data     = std::make_shared<CGradientValueData>(0xff444444);
+    configValues["dwindle:col.group_border"].data        = std::make_shared<CGradientValueData>(0x66777700);
+    configValues["dwindle:col.group_border_active"].data = std::make_shared<CGradientValueData>(0x66ffff00);
 
     setDefaultVars();
     setDefaultAnimationVars();
@@ -37,8 +39,6 @@ void CConfigManager::setDefaultVars() {
     configValues["general:max_fps"].intValue           = 60;
     configValues["general:sensitivity"].floatValue     = 1.0f;
     configValues["general:apply_sens_to_raw"].intValue = 0;
-    configValues["general:main_mod"].strValue          = "SUPER";                                     // exposed to the user for easier configuring
-    configValues["general:main_mod_internal"].intValue = g_pKeybindManager->stringToModMask("SUPER"); // actually used and automatically calculated
 
     configValues["general:border_size"].intValue           = 1;
     configValues["general:no_border_on_floating"].intValue = 0;
@@ -94,11 +94,13 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:col.shadow_inactive"].intValue    = INT_MAX;
     configValues["decoration:dim_inactive"].intValue           = 0;
     configValues["decoration:dim_strength"].floatValue         = 0.5f;
+    configValues["decoration:dim_special"].floatValue          = 0.2f;
+    configValues["decoration:dim_around"].floatValue           = 0.4f;
     configValues["decoration:screen_shader"].strValue          = STRVAL_EMPTY;
 
+    ((CGradientValueData*)configValues["dwindle:col.group_border"].data.get())->reset(0x66777700);
+    ((CGradientValueData*)configValues["dwindle:col.group_border_active"].data.get())->reset(0x66ffff00);
     configValues["dwindle:pseudotile"].intValue               = 0;
-    configValues["dwindle:col.group_border"].intValue         = 0x66777700;
-    configValues["dwindle:col.group_border_active"].intValue  = 0x66ffff00;
     configValues["dwindle:force_split"].intValue              = 0;
     configValues["dwindle:preserve_split"].intValue           = 0;
     configValues["dwindle:special_scale_factor"].floatValue   = 0.8f;
@@ -155,6 +157,7 @@ void CConfigManager::setDefaultVars() {
     configValues["input:touchpad:clickfinger_behavior"].intValue    = 0;
     configValues["input:touchpad:middle_button_emulation"].intValue = 0;
     configValues["input:touchpad:tap-to-click"].intValue            = 1;
+    configValues["input:touchpad:tap-and-drag"].intValue            = 1;
     configValues["input:touchpad:drag_lock"].intValue               = 0;
     configValues["input:touchpad:scroll_factor"].floatValue         = 1.f;
     configValues["input:touchdevice:transform"].intValue            = 0;
@@ -173,6 +176,7 @@ void CConfigManager::setDefaultVars() {
     configValues["gestures:workspace_swipe_cancel_ratio"].floatValue     = 0.5f;
     configValues["gestures:workspace_swipe_create_new"].intValue         = 1;
     configValues["gestures:workspace_swipe_forever"].intValue            = 0;
+    configValues["gestures:workspace_swipe_numbered"].intValue           = 0;
 
     configValues["input:follow_mouse"].intValue = 1;
 
@@ -198,12 +202,13 @@ void CConfigManager::setDeviceDefaultVars(const std::string& dev) {
     cfgValues["clickfinger_behavior"].intValue    = 0;
     cfgValues["middle_button_emulation"].intValue = 0;
     cfgValues["tap-to-click"].intValue            = 1;
+    cfgValues["tap-and-drag"].intValue            = 1;
     cfgValues["drag_lock"].intValue               = 0;
     cfgValues["left_handed"].intValue             = 0;
     cfgValues["scroll_method"].strValue           = STRVAL_EMPTY;
     cfgValues["scroll_button"].intValue           = 0;
-    cfgValues["touch_transform"].intValue         = 0;
-    cfgValues["touch_output"].strValue            = STRVAL_EMPTY;
+    cfgValues["transform"].intValue               = 0;
+    cfgValues["output"].strValue                  = STRVAL_EMPTY;
     cfgValues["enabled"].intValue                 = 1; // only for mice / touchpads
 }
 
@@ -300,6 +305,11 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
         auto it = deviceConfigs.find(DEVICE);
 
         if (it->second.find(CONFIGVAR) == it->second.end()) {
+            if (it->second.contains("touch_output") || it->second.contains("touch_transform")) {
+                parseError = "touch_output and touch_transform have been changed to output and transform respectively";
+                return;
+            }
+
             parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">: No such field.";
             return;
         }
@@ -379,7 +389,7 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
                     }
 
                     try {
-                        data->m_vColors.push_back(CColor(configStringToInt(var)) * (1.f / 255.f));
+                        data->m_vColors.push_back(CColor(configStringToInt(var)));
                     } catch (std::exception& e) {
                         Debug::log(WARN, "Error reading value of %s", COMMAND.c_str());
                         parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">. " + e.what();
@@ -730,8 +740,8 @@ bool windowRuleValid(const std::string& RULE) {
     return !(RULE != "float" && RULE != "tile" && RULE.find("opacity") != 0 && RULE.find("move") != 0 && RULE.find("size") != 0 && RULE.find("minsize") != 0 &&
              RULE.find("maxsize") != 0 && RULE.find("pseudo") != 0 && RULE.find("monitor") != 0 && RULE.find("idleinhibit") != 0 && RULE != "nofocus" && RULE != "noinitialfocus" && RULE != "noblur" &&
              RULE != "noshadow" && RULE != "noborder" && RULE != "center" && RULE != "opaque" && RULE != "forceinput" && RULE != "fullscreen" && RULE != "nofullscreenrequest" &&
-             RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "windowdance" && RULE.find("animation") != 0 && RULE.find("rounding") != 0 &&
-             RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0);
+             RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" && RULE != "maximize" && RULE.find("animation") != 0 &&
+             RULE.find("rounding") != 0 && RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0);
 }
 
 void CConfigManager::handleWindowRule(const std::string& command, const std::string& value) {
@@ -1246,20 +1256,18 @@ void CConfigManager::loadConfigLoadVars() {
         g_pInputManager->setKeyboardLayout();
         g_pInputManager->setPointerConfigs();
         g_pInputManager->setTouchDeviceConfigs();
+        g_pInputManager->setTabletConfigs();
     }
-
-    // Calculate the internal vars
-    configValues["general:main_mod_internal"].intValue = g_pKeybindManager->stringToModMask(configValues["general:main_mod"].strValue);
 
     if (!isFirstLaunch)
         g_pHyprOpenGL->m_bReloadScreenShader = true;
 
     // parseError will be displayed next frame
     if (parseError != "")
-        g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(255, 50, 50, 255));
+        g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0));
     else if (configValues["autogenerated"].intValue == 1)
         g_pHyprError->queueCreate("Warning: You're using an autogenerated config! (config file: " + CONFIGPATH + " )\nSUPER+Q -> kitty\nSUPER+M -> exit Hyprland",
-                                  CColor(255, 255, 70, 255));
+                                  CColor(1.0, 1.0, 70.0 / 255.0, 1.0));
     else
         g_pHyprError->destroy();
 
@@ -1354,7 +1362,7 @@ SConfigValue CConfigManager::getConfigValueSafeDevice(const std::string& dev, co
             if (foundIt == std::string::npos)
                 continue;
 
-            if (cv.first == "input:" + val || cv.first == "input:touchpad:" + cv.first) {
+            if (cv.first == "input:" + val || cv.first == "input:touchpad:" + cv.first || cv.first == "input:touchdevice:" + val) {
                 copy = cv.second;
             }
         }
@@ -1551,6 +1559,7 @@ void CConfigManager::dispatchExecOnce() {
     g_pInputManager->setKeyboardLayout();
     g_pInputManager->setPointerConfigs();
     g_pInputManager->setTouchDeviceConfigs();
+    g_pInputManager->setTabletConfigs();
 
     // set ws names again
     for (auto& ws : g_pCompositor->m_vWorkspaces) {
@@ -1679,7 +1688,7 @@ void CConfigManager::addParseError(const std::string& err) {
     if (parseError == "")
         parseError = err;
 
-    g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(255, 50, 50, 255));
+    g_pHyprError->queueCreate(parseError + "\nHyprland may not work correctly.", CColor(1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0));
 }
 
 CMonitor* CConfigManager::getBoundMonitorForWS(const std::string& wsname) {

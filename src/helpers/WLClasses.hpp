@@ -57,7 +57,7 @@ struct SRenderData {
     bool dontRound = true;
 
     // for fade
-    float fadeAlpha = 255.f;
+    float fadeAlpha = 1.f;
 
     // for alpha settings
     float alpha = 1.f;
@@ -253,6 +253,7 @@ struct STabletTool {
 struct STabletPad {
     wlr_tablet_v2_tablet_pad* wlrTabletPadV2 = nullptr;
     STablet*                  pTabletParent  = nullptr;
+    wlr_input_device*         pWlrDevice     = nullptr;
 
     std::string               name = "";
 

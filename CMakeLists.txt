@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.4)
+
+# Get version
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/props.json PROPS)
+string(JSON VER GET ${PROPS} version)
+
 project(Hyprland 
     DESCRIPTION "A Modern C++ Wayland Compositor"
+    VERSION ${VER}
 )
 
 set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
@@ -73,6 +79,19 @@ ELSE()
     pkg_check_modules(xcbdep REQUIRED xcb)
     target_link_libraries(Hyprland xcb)
 ENDIF(NO_XWAYLAND MATCHES true)
+
+IF(NO_SYSTEMD MATCHES true)
+    message(STATUS "SYSTEMD support is disabled...")
+ELSE()
+    message(STATUS "SYSTEMD support is requested (NO_SYSTEMD not defined) checking deps...")
+    pkg_check_modules(LIBSYSTEMD libsystemd)
+    IF(LIBSYSTEMD_FOUND)
+        add_definitions( -DUSES_SYSTEMD )
+        target_link_libraries(Hyprland "${LIBSYSTEMD_LIBRARIES}")
+    ELSE()
+        message(WARNING "Systemd support requested but libsystemd was not found")
+    ENDIF(LIBSYSTEMD_FOUND)
+ENDIF(NO_SYSTEMD MATCHES true)
 
 target_compile_definitions(Hyprland PRIVATE "-DGIT_COMMIT_HASH=\"${GIT_COMMIT_HASH}\"")
 target_compile_definitions(Hyprland PRIVATE "-DGIT_BRANCH=\"${GIT_BRANCH}\"")

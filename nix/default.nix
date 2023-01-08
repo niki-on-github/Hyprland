@@ -9,6 +9,7 @@
   cairo,
   git,
   hyprland-protocols,
+  jq,
   libdrm,
   libinput,
   libxcb,
@@ -16,6 +17,7 @@
   mesa,
   mount,
   pciutils,
+  systemd,
   wayland,
   wayland-protocols,
   wayland-scanner,
@@ -27,6 +29,7 @@
   hidpiXWayland ? true,
   legacyRenderer ? false,
   nvidiaPatches ? false,
+  withSystemd ? true,
   version ? "git",
 }: let
   assertXWayland = lib.assertMsg (hidpiXWayland -> enableXWayland) ''
@@ -49,6 +52,7 @@ in
       };
 
       nativeBuildInputs = [
+        jq
         meson
         ninja
         pkg-config
@@ -63,6 +67,7 @@ in
         [
           git
           cairo
+          hyprland-protocols
           libdrm
           libinput
           libxkbcommon
@@ -73,7 +78,8 @@ in
           pciutils
           (wlroots.override {inherit enableXWayland hidpiXWayland nvidiaPatches;})
         ]
-        ++ lib.optionals enableXWayland [libxcb xcbutilwm xwayland];
+        ++ lib.optionals enableXWayland [libxcb xcbutilwm xwayland]
+        ++ lib.optionals withSystemd [systemd];
 
       mesonBuildType =
         if debug
@@ -83,6 +89,7 @@ in
       mesonFlags = builtins.concatLists [
         (lib.optional (!enableXWayland) "-Dxwayland=disabled")
         (lib.optional legacyRenderer "-DLEGACY_RENDERER:STRING=true")
+        (lib.optional withSystemd "-Dsystemd=enabled")
       ];
 
       patches = [
@@ -90,13 +97,9 @@ in
         ./meson-build.patch
       ];
 
-      # Fix hardcoded paths to /usr installation
       postPatch = ''
+        # Fix hardcoded paths to /usr installation
         sed -i "s#/usr#$out#" src/render/OpenGL.cpp
-
-        # for some reason rmdir doesn't work in a dirty tree
-        rmdir subprojects/hyprland-protocols || true
-        ln -s ${hyprland-protocols} subprojects/hyprland-protocols
       '';
 
       passthru.providedSessions = ["hyprland"];
