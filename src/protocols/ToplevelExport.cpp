@@ -53,7 +53,7 @@ void handleCaptureToplevelWithWlr(wl_client* client, wl_resource* resource, uint
     g_pProtocolManager->m_pToplevelExportProtocolManager->captureToplevel(client, resource, frame, overlay_cursor, g_pCompositor->getWindowFromZWLRHandle(handle));
 }
 
-void handleDestroy(wl_client* client, wl_resource* resource) {
+static void handleDestroy(wl_client* client, wl_resource* resource) {
     wl_resource_destroy(resource);
 }
 
@@ -95,7 +95,7 @@ void CToplevelExportProtocolManager::removeClient(SToplevelClient* client, bool 
     m_lClients.remove(*client); // TODO: this doesn't get cleaned up after sharing app exits???
 }
 
-void handleManagerResourceDestroy(wl_resource* resource) {
+static void handleManagerResourceDestroy(wl_resource* resource) {
     const auto PCLIENT = clientFromResource(resource);
 
     g_pProtocolManager->m_pToplevelExportProtocolManager->removeClient(PCLIENT, true);
@@ -347,6 +347,13 @@ bool CToplevelExportProtocolManager::copyFrameShm(SToplevelFrame* frame, timespe
     pixman_region32_t fakeDamage;
     pixman_region32_init_rect(&fakeDamage, 0, 0, PMONITOR->vecPixelSize.x * 10, PMONITOR->vecPixelSize.y * 10);
 
+    if (!wlr_output_attach_render(PMONITOR->output, nullptr)) {
+        Debug::log(ERR, "[toplevel_export] Couldn't attach render");
+        pixman_region32_fini(&fakeDamage);
+        wlr_buffer_end_data_ptr_access(frame->buffer);
+        return false;
+    }
+
     g_pHyprOpenGL->begin(PMONITOR, &fakeDamage, true);
     g_pHyprOpenGL->clear(CColor(0, 0, 0, 1.0));
 
@@ -358,7 +365,7 @@ bool CToplevelExportProtocolManager::copyFrameShm(SToplevelFrame* frame, timespe
     // copy pixels
     const auto PFORMAT = get_gles2_format_from_drm(format);
     if (!PFORMAT) {
-        Debug::log(ERR, "Cannot read pixels, unsupported format %x", PFORMAT);
+        Debug::log(ERR, "[toplevel_export] Cannot read pixels, unsupported format %x", PFORMAT);
         g_pHyprOpenGL->end();
         pixman_region32_fini(&fakeDamage);
         wlr_buffer_end_data_ptr_access(frame->buffer);
@@ -372,6 +379,8 @@ bool CToplevelExportProtocolManager::copyFrameShm(SToplevelFrame* frame, timespe
     glReadPixels(0, 0, frame->box.width, frame->box.height, PFORMAT->gl_format, PFORMAT->gl_type, data);
 
     g_pHyprOpenGL->end();
+
+    wlr_output_rollback(PMONITOR->output);
 
     pixman_region32_fini(&fakeDamage);
 

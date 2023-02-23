@@ -40,6 +40,8 @@ class CKeybindManager {
     bool                                                              onAxisEvent(wlr_pointer_axis_event*);
     bool                                                              onMouseEvent(wlr_pointer_button_event*);
     void                                                              onSwitchEvent(const std::string&);
+    void                                                              onSwitchOnEvent(const std::string&);
+    void                                                              onSwitchOffEvent(const std::string&);
 
     void                                                              addKeybind(SKeybind);
     void                                                              removeKeybind(uint32_t, const std::string&);
@@ -95,6 +97,8 @@ class CKeybindManager {
     static void moveActiveToWorkspace(std::string);
     static void moveActiveToWorkspaceSilent(std::string);
     static void moveFocusTo(std::string);
+    static void focusUrgentOrLast(std::string);
+    static void focusCurrentOrLast(std::string);
     static void centerWindow(std::string);
     static void moveActiveTo(std::string);
     static void toggleGroup(std::string);
@@ -104,6 +108,7 @@ class CKeybindManager {
     static void toggleSplit(std::string);
     static void moveCursorToCorner(std::string);
     static void workspaceOpt(std::string);
+    static void renameWorkspace(std::string);
     static void exitHyprland(std::string);
     static void moveCurrentWorkspaceToMonitor(std::string);
     static void moveWorkspaceToMonitor(std::string);

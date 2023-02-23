@@ -44,6 +44,9 @@ void Events::listener_newOutput(wl_listener* listener, void* data) {
     // new monitor added, let's accomodate for that.
     const auto OUTPUT = (wlr_output*)data;
 
+    // for warping the cursor on launch
+    static bool firstLaunch = true;
+
     if (!OUTPUT->name) {
         Debug::log(ERR, "New monitor has no name?? Ignoring");
         return;
@@ -89,6 +92,13 @@ void Events::listener_newOutput(wl_listener* listener, void* data) {
 
     g_pConfigManager->m_bWantsMonitorReload = true;
     g_pCompositor->scheduleFrameForMonitor(PNEWMONITOR);
+
+    if (firstLaunch) {
+        firstLaunch    = false;
+        const auto POS = PNEWMONITOR->vecPosition + PNEWMONITOR->vecSize / 2.f;
+        if (g_pCompositor->m_sSeat.mouse)
+            wlr_cursor_warp(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, POS.x, POS.y);
+    }
 }
 
 void Events::listener_monitorFrame(void* owner, void* data) {
@@ -109,8 +119,8 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     static auto* const                                    PDEBUGOVERLAY       = &g_pConfigManager->getConfigValuePtr("debug:overlay")->intValue;
     static auto* const                                    PDAMAGETRACKINGMODE = &g_pConfigManager->getConfigValuePtr("debug:damage_tracking")->intValue;
     static auto* const                                    PDAMAGEBLINK        = &g_pConfigManager->getConfigValuePtr("debug:damage_blink")->intValue;
-    static auto* const                                    PNOVFR              = &g_pConfigManager->getConfigValuePtr("misc:no_vfr")->intValue;
     static auto* const                                    PNODIRECTSCANOUT    = &g_pConfigManager->getConfigValuePtr("misc:no_direct_scanout")->intValue;
+    static auto* const                                    PVFR                = &g_pConfigManager->getConfigValuePtr("misc:vfr")->intValue;
 
     static int                                            damageBlinkCleanup = 0; // because double-buffered
 
@@ -139,7 +149,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
     // checks //
     if (PMONITOR->ID == g_pHyprRenderer->m_pMostHzMonitor->ID ||
-        !*PNOVFR) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that
+        *PVFR == 1) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that
         g_pCompositor->sanityCheckWorkspaces();
         g_pAnimationManager->tick();
 
@@ -166,6 +176,8 @@ void Events::listener_monitorFrame(void* owner, void* data) {
             g_pHyprRenderer->m_pLastScanout = nullptr;
         }
     }
+
+    g_pProtocolManager->m_pToplevelExportProtocolManager->onMonitorRender(PMONITOR); // dispatch any toplevel sharing
 
     timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -194,7 +206,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
         pixman_region32_fini(&damage);
         wlr_output_rollback(PMONITOR->output);
 
-        if (*PDAMAGEBLINK || *PNOVFR)
+        if (*PDAMAGEBLINK || *PVFR == 0)
             g_pCompositor->scheduleFrameForMonitor(PMONITOR);
 
         return;
@@ -216,10 +228,12 @@ void Events::listener_monitorFrame(void* owner, void* data) {
             static auto* const PBLURPASSES = &g_pConfigManager->getConfigValuePtr("decoration:blur_passes")->intValue;
             const auto         BLURRADIUS  = *PBLURSIZE * pow(2, *PBLURPASSES); // is this 2^pass? I don't know but it works... I think.
 
-            pixman_region32_copy(&g_pHyprOpenGL->m_rOriginalDamageRegion, &damage);
-
             // now, prep the damage, get the extended damage region
             wlr_region_expand(&damage, &damage, BLURRADIUS); // expand for proper blurring
+
+            pixman_region32_copy(&g_pHyprOpenGL->m_rOriginalDamageRegion, &damage);
+
+            wlr_region_expand(&damage, &damage, BLURRADIUS); // expand for proper blurring 2
         } else {
             pixman_region32_copy(&g_pHyprOpenGL->m_rOriginalDamageRegion, &damage);
         }
@@ -273,14 +287,12 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
     g_pHyprOpenGL->end();
 
-    g_pProtocolManager->m_pToplevelExportProtocolManager->onMonitorRender(PMONITOR); // dispatch any toplevel sharing
-
     // calc frame damage
     pixman_region32_t frameDamage;
     pixman_region32_init(&frameDamage);
 
     const auto TRANSFORM = wlr_output_transform_invert(PMONITOR->output->transform);
-    wlr_region_transform(&frameDamage, &PMONITOR->damage->current, TRANSFORM, (int)PMONITOR->vecTransformedSize.x, (int)PMONITOR->vecTransformedSize.y);
+    wlr_region_transform(&frameDamage, &g_pHyprOpenGL->m_rOriginalDamageRegion, TRANSFORM, (int)PMONITOR->vecTransformedSize.x, (int)PMONITOR->vecTransformedSize.y);
 
     if (*PDAMAGETRACKINGMODE == DAMAGE_TRACKING_NONE || *PDAMAGETRACKINGMODE == DAMAGE_TRACKING_MONITOR)
         pixman_region32_union_rect(&frameDamage, &frameDamage, 0, 0, (int)PMONITOR->vecTransformedSize.x, (int)PMONITOR->vecTransformedSize.y);
@@ -299,7 +311,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     if (!wlr_output_commit(PMONITOR->output))
         return;
 
-    if (*PDAMAGEBLINK || *PNOVFR)
+    if (*PDAMAGEBLINK || *PVFR == 0)
         g_pCompositor->scheduleFrameForMonitor(PMONITOR);
 
     if (*PDEBUGOVERLAY == 1) {
