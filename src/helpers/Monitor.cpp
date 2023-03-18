@@ -132,6 +132,7 @@ void CMonitor::onConnect(bool noRule) {
     //
 
     g_pEventManager->postEvent(SHyprIPCEvent{"monitoradded", szName});
+    EMIT_HOOK_EVENT("monitorAdded", this);
 
     if (!g_pCompositor->m_pLastMonitor) // set the last monitor if it isnt set yet
         g_pCompositor->setActiveMonitor(this);
@@ -203,6 +204,7 @@ void CMonitor::onDisconnect() {
     Debug::log(LOG, "Removed monitor %s!", szName.c_str());
 
     g_pEventManager->postEvent(SHyprIPCEvent{"monitorremoved", szName});
+    EMIT_HOOK_EVENT("monitorRemoved", this);
 
     if (!BACKUPMON) {
         Debug::log(WARN, "Unplugged last monitor, entering an unsafe state. Good luck my friend.");
@@ -211,6 +213,8 @@ void CMonitor::onDisconnect() {
         hyprListener_monitorDestroy.removeCallback();
 
         g_pCompositor->m_bUnsafeState = true;
+
+        std::erase_if(g_pCompositor->m_vMonitors, [&](std::shared_ptr<CMonitor>& el) { return el.get() == this; });
 
         return;
     }
@@ -293,13 +297,15 @@ int CMonitor::findAvailableDefaultWS() {
 void CMonitor::setupDefaultWS(const SMonitorRule& monitorRule) {
     // Workspace
     std::string newDefaultWorkspaceName = "";
-    int64_t     WORKSPACEID = monitorRule.defaultWorkspace == "" ? findAvailableDefaultWS() : getWorkspaceIDFromString(monitorRule.defaultWorkspace, newDefaultWorkspaceName);
+    int64_t     WORKSPACEID             = g_pConfigManager->getDefaultWorkspaceFor(szName).empty() ?
+                        findAvailableDefaultWS() :
+                        getWorkspaceIDFromString(g_pConfigManager->getDefaultWorkspaceFor(szName), newDefaultWorkspaceName);
 
     if (WORKSPACEID == INT_MAX || (WORKSPACEID >= SPECIAL_WORKSPACE_START && WORKSPACEID <= -2)) {
         WORKSPACEID             = g_pCompositor->m_vWorkspaces.size() + 1;
         newDefaultWorkspaceName = std::to_string(WORKSPACEID);
 
-        Debug::log(LOG, "Invalid workspace= directive name in monitor parsing, workspace name \"%s\" is invalid.", monitorRule.defaultWorkspace.c_str());
+        Debug::log(LOG, "Invalid workspace= directive name in monitor parsing, workspace name \"%s\" is invalid.", g_pConfigManager->getDefaultWorkspaceFor(szName).c_str());
     }
 
     auto PNEWWORKSPACE = g_pCompositor->getWorkspaceByID(WORKSPACEID);
@@ -405,7 +411,7 @@ void CMonitor::setMirror(const std::string& mirrorOf) {
 
         wlr_output_layout_remove(g_pCompositor->m_sWLROutputLayout, output);
 
-        vecPosition = Vector2D(-1337420, -1337420);
+        vecPosition = PMIRRORMON->vecPosition;
 
         pMirrorOf = PMIRRORMON;
 
