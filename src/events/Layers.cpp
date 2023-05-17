@@ -55,14 +55,14 @@ void Events::listener_newLayerSurface(wl_listener* listener, void* data) {
 
     layerSurface->forceBlur = g_pConfigManager->shouldBlurLS(layerSurface->szNamespace);
 
-    Debug::log(LOG, "LayerSurface %x (namespace %s layer %d) created on monitor %s", layerSurface->layerSurface, layerSurface->layerSurface->_namespace, layerSurface->layer,
+    Debug::log(LOG, "LayerSurface %lx (namespace %s layer %d) created on monitor %s", layerSurface->layerSurface, layerSurface->layerSurface->_namespace, layerSurface->layer,
                PMONITOR->szName.c_str());
 }
 
 void Events::listener_destroyLayerSurface(void* owner, void* data) {
     SLayerSurface* layersurface = (SLayerSurface*)owner;
 
-    Debug::log(LOG, "LayerSurface %x destroyed", layersurface->layerSurface);
+    Debug::log(LOG, "LayerSurface %lx destroyed", layersurface->layerSurface);
 
     const auto PMONITOR = g_pCompositor->getMonitorFromID(layersurface->monitorID);
 
@@ -107,10 +107,12 @@ void Events::listener_destroyLayerSurface(void* owner, void* data) {
 void Events::listener_mapLayerSurface(void* owner, void* data) {
     SLayerSurface* layersurface = (SLayerSurface*)owner;
 
-    Debug::log(LOG, "LayerSurface %x mapped", layersurface->layerSurface);
+    Debug::log(LOG, "LayerSurface %lx mapped", layersurface->layerSurface);
 
     layersurface->layerSurface->mapped = true;
     layersurface->mapped               = true;
+
+    layersurface->surface = layersurface->layerSurface->surface;
 
     // anim
     layersurface->alpha.setConfig(g_pConfigManager->getAnimationPropertyConfig("fadeIn"));
@@ -171,7 +173,7 @@ void Events::listener_mapLayerSurface(void* owner, void* data) {
 void Events::listener_unmapLayerSurface(void* owner, void* data) {
     SLayerSurface* layersurface = (SLayerSurface*)owner;
 
-    Debug::log(LOG, "LayerSurface %x unmapped", layersurface->layerSurface);
+    Debug::log(LOG, "LayerSurface %lx unmapped", layersurface->layerSurface);
 
     g_pEventManager->postEvent(SHyprIPCEvent{"closelayer", std::string(layersurface->layerSurface->_namespace ? layersurface->layerSurface->_namespace : "")});
     EMIT_HOOK_EVENT("closeLayer", layersurface);
@@ -207,11 +209,16 @@ void Events::listener_unmapLayerSurface(void* owner, void* data) {
 
     const auto PMONITOR = g_pCompositor->getMonitorFromOutput(layersurface->layerSurface->output);
 
+    const bool WASLASTFOCUS = g_pCompositor->m_pLastFocus == layersurface->layerSurface->surface;
+
+    layersurface->surface = nullptr;
+
     if (!PMONITOR)
         return;
 
     // refocus if needed
-    if (layersurface->layerSurface->surface == g_pCompositor->m_pLastFocus) {
+    if (WASLASTFOCUS) {
+        g_pInputManager->releaseAllMouseButtons();
 
         Vector2D       surfaceCoords;
         SLayerSurface* pFoundLayerSurface = nullptr;

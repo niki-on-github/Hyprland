@@ -116,7 +116,6 @@ class CCompositor {
     bool                                      m_bDPMSStateON    = true;
     bool                                      m_bUnsafeState    = false; // unsafe state is when there is no monitors.
     bool                                      m_bIsShuttingDown = false;
-    std::deque<uint64_t>                      m_dProcessPIDsOnShutdown; // stores PIDs of apps to kill later when shutting down
 
     // ------------------------------------------------- //
 
@@ -172,6 +171,7 @@ class CCompositor {
     CMonitor*      getMonitorFromString(const std::string&);
     bool           workspaceIDOutOfBounds(const int&);
     void           setWindowFullscreen(CWindow*, bool, eFullscreenMode);
+    void           updateFullscreenFadeOnWorkspace(CWorkspace*);
     CWindow*       getX11Parent(CWindow*);
     void           scheduleFrameForMonitor(CMonitor*);
     void           addToFadingOutSafe(SLayerSurface*);
@@ -189,6 +189,8 @@ class CCompositor {
     void           setActiveMonitor(CMonitor*);
     bool           isWorkspaceSpecial(const int&);
     int            getNewSpecialID();
+    void           performUserChecks();
+    void           moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace);
 
     std::string    explicitConfigPath;
 
@@ -214,4 +216,5 @@ inline std::map<std::string, xcb_atom_t> HYPRATOMS = {HYPRATOM("_NET_WM_WINDOW_T
                                                       HYPRATOM("_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"),
                                                       HYPRATOM("_NET_WM_WINDOW_TYPE_POPUP_MENU"),
                                                       HYPRATOM("_NET_WM_WINDOW_TYPE_TOOLTIP"),
-                                                      HYPRATOM("_NET_WM_WINDOW_TYPE_NOTIFICATION")};
+                                                      HYPRATOM("_NET_WM_WINDOW_TYPE_NOTIFICATION"),
+                                                      HYPRATOM("_KDE_NET_WM_WINDOW_TYPE_OVERRIDE")};

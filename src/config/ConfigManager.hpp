@@ -10,6 +10,7 @@
 #include <deque>
 #include <algorithm>
 #include <regex>
+#include <optional>
 #include "../Window.hpp"
 #include "../helpers/WLClasses.hpp"
 
@@ -45,6 +46,19 @@ struct SMonitorRule {
     bool                enable10bit = false;
 };
 
+struct SWorkspaceRule {
+    std::string            monitor         = "";
+    std::string            workspaceString = "";
+    std::string            workspaceName   = "";
+    int                    workspaceId     = -1;
+    std::optional<int64_t> gapsIn;
+    std::optional<int64_t> gapsOut;
+    std::optional<int64_t> borderSize;
+    std::optional<int>     border;
+    std::optional<int>     rounding;
+    std::optional<int>     decorate;
+};
+
 struct SMonitorAdditionalReservedArea {
     int top    = 0;
     int bottom = 0;
@@ -53,7 +67,7 @@ struct SMonitorAdditionalReservedArea {
 };
 
 struct SAnimationPropertyConfig {
-    bool                      overriden = true;
+    bool                      overridden = true;
 
     std::string               internalBezier  = "";
     std::string               internalStyle   = "";
@@ -149,6 +163,7 @@ class CConfigManager {
     SConfigValue*                                                   getConfigValuePtrSafe(const std::string&);
 
     SMonitorRule                                                    getMonitorRuleFor(const std::string&, const std::string& displayName = "");
+    SWorkspaceRule                                                  getWorkspaceRuleFor(CWorkspace*);
     std::string                                                     getDefaultWorkspaceFor(const std::string&);
 
     CMonitor*                                                       getBoundMonitorForWS(const std::string&);
@@ -171,7 +186,7 @@ class CConfigManager {
     bool                      m_bWantsMonitorReload = false;
     bool                      m_bForceReload        = false;
     bool                      m_bNoMonitorReload    = false;
-    void                      ensureDPMS();
+    void                      ensureMonitorStatus();
     void                      ensureVRR(CMonitor* pMonitor = nullptr);
 
     std::string               parseKeyword(const std::string&, const std::string&, bool dynamic = false);
@@ -181,6 +196,8 @@ class CConfigManager {
     SAnimationPropertyConfig* getAnimationPropertyConfig(const std::string&);
 
     void                      addExecRule(const SExecRequestedRule&);
+
+    void                      handlePluginLoads();
 
     std::string               configCurrentPath;
 
@@ -203,17 +220,19 @@ class CConfigManager {
 
     std::vector<SExecRequestedRule>                                                            execRequestedRules; // rules requested with exec, e.g. [workspace 2] kitty
 
+    std::vector<std::string>                                                                   m_vDeclaredPlugins;
     std::unordered_map<HANDLE, std::unique_ptr<std::unordered_map<std::string, SConfigValue>>> pluginConfigs; // stores plugin configs
 
     bool                                                                                       isFirstLaunch = true; // For exec-once
 
     std::deque<SMonitorRule>                                                                   m_dMonitorRules;
-    std::unordered_map<std::string, std::string>                                               m_mDefaultWorkspaces;
+    std::unordered_map<int, SWorkspaceRule>                                                    m_mWorkspaceRules;
     std::deque<SWindowRule>                                                                    m_dWindowRules;
     std::deque<SLayerRule>                                                                     m_dLayerRules;
     std::deque<std::string>                                                                    m_dBlurLSNamespaces;
 
-    bool                                                                                       firstExecDispatched = false;
+    bool                                                                                       firstExecDispatched     = false;
+    bool                                                                                       m_bManualCrashInitiated = false;
     std::deque<std::string>                                                                    firstExecRequests;
 
     std::vector<std::pair<std::string, std::string>>                                           environmentVariables;
@@ -241,7 +260,7 @@ class CConfigManager {
     void         handleWindowRule(const std::string&, const std::string&);
     void         handleLayerRule(const std::string&, const std::string&);
     void         handleWindowRuleV2(const std::string&, const std::string&);
-    void         handleDefaultWorkspace(const std::string&, const std::string&);
+    void         handleWorkspaceRules(const std::string&, const std::string&);
     void         handleBezier(const std::string&, const std::string&);
     void         handleAnimation(const std::string&, const std::string&);
     void         handleSource(const std::string&, const std::string&);
@@ -250,6 +269,7 @@ class CConfigManager {
     void         handleBlurLS(const std::string&, const std::string&);
     void         handleBindWS(const std::string&, const std::string&);
     void         handleEnv(const std::string&, const std::string&);
+    void         handlePlugin(const std::string&, const std::string&);
 };
 
 inline std::unique_ptr<CConfigManager> g_pConfigManager;
