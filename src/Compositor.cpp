@@ -986,7 +986,7 @@ CWindow* CCompositor::getWindowForPopup(wlr_xdg_popup* popup) {
 wlr_surface* CCompositor::vectorToLayerSurface(const Vector2D& pos, std::vector<std::unique_ptr<SLayerSurface>>* layerSurfaces, Vector2D* sCoords,
                                                SLayerSurface** ppLayerSurfaceFound) {
     for (auto& ls : *layerSurfaces | std::views::reverse) {
-        if (ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->mapped) || ls->alpha.fl() == 0.f)
+        if (ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->surface->mapped) || ls->alpha.fl() == 0.f)
             continue;
 
         auto SURFACEAT = wlr_layer_surface_v1_surface_at(ls->layerSurface, pos.x - ls->geometry.x, pos.y - ls->geometry.y, &sCoords->x, &sCoords->y);
@@ -1486,6 +1486,15 @@ CWorkspace* CCompositor::getWorkspaceByString(const std::string& str) {
     return nullptr;
 }
 
+CWorkspace* CCompositor::getWorkspaceByWorkspaceHandle(const wlr_ext_workspace_handle_v1* handle) {
+    for (auto& ws : m_vWorkspaces) {
+        if (ws->m_pWlrHandle == handle)
+            return ws.get();
+    }
+
+    return nullptr;
+}
+
 bool CCompositor::isPointOnAnyMonitor(const Vector2D& point) {
     for (auto& m : m_vMonitors) {
         if (VECINRECT(point, m->vecPosition.x, m->vecPosition.y, m->vecSize.x + m->vecPosition.x, m->vecSize.y + m->vecPosition.y))
@@ -1656,7 +1665,7 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     }
 
     // dim
-    if (pWindow == m_pLastWindow) {
+    if (pWindow == m_pLastWindow || pWindow->m_sAdditionalConfigData.forceNoDim) {
         pWindow->m_fDimPercent = 0;
     } else {
         pWindow->m_fDimPercent = *PDIMSTRENGTH;
@@ -2341,6 +2350,9 @@ void CCompositor::performUserChecks() {
 
 void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace) {
     if (!pWindow || !pWorkspace)
+        return;
+
+    if (pWindow->m_bPinned && pWorkspace->m_bIsSpecialWorkspace)
         return;
 
     const bool FULLSCREEN     = pWindow->m_bIsFullscreen;

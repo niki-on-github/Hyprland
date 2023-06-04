@@ -91,8 +91,18 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
 
+    // this can happen if there are no displays hooked up to Hyprland
+    if (PMONITOR == nullptr)
+        return;
+
     if (*PZOOMFACTOR != 1.f)
         g_pHyprRenderer->damageMonitor(PMONITOR);
+
+    if (m_pForcedFocus) {
+        pFoundWindow = m_pForcedFocus;
+        surfacePos   = pFoundWindow->m_vRealPosition.vec();
+        foundSurface = m_pForcedFocus->m_pWLSurface.wlr();
+    }
 
     // constraints
     // All constraints TODO: multiple mice?
@@ -1309,7 +1319,7 @@ void CInputManager::newTouchDevice(wlr_input_device* pDevice) {
         Debug::log(ERR, "Touch Device had no name???"); // logic error
     }
 
-    setTouchDeviceConfigs();
+    setTouchDeviceConfigs(PNEWDEV);
     wlr_cursor_attach_input_device(g_pCompositor->m_sWLRCursor, pDevice);
 
     Debug::log(LOG, "New touch device added at %lx", PNEWDEV);
@@ -1318,14 +1328,13 @@ void CInputManager::newTouchDevice(wlr_input_device* pDevice) {
         &pDevice->events.destroy, [&](void* owner, void* data) { destroyTouchDevice((STouchDevice*)data); }, PNEWDEV, "TouchDevice");
 }
 
-void CInputManager::setTouchDeviceConfigs() {
-    for (auto& m : m_lTouchDevices) {
-        const auto PTOUCHDEV = &m;
+void CInputManager::setTouchDeviceConfigs(STouchDevice* dev) {
 
+    auto setConfig = [&](STouchDevice* const PTOUCHDEV) -> void {
         const auto HASCONFIG = g_pConfigManager->deviceConfigExists(PTOUCHDEV->name);
 
-        if (wlr_input_device_is_libinput(m.pWlrDevice)) {
-            const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(m.pWlrDevice);
+        if (wlr_input_device_is_libinput(PTOUCHDEV->pWlrDevice)) {
+            const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(PTOUCHDEV->pWlrDevice);
 
             const int  ROTATION =
                 std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
@@ -1338,6 +1347,17 @@ void CInputManager::setTouchDeviceConfigs() {
             else
                 PTOUCHDEV->boundOutput = "";
         }
+    };
+
+    if (dev) {
+        setConfig(dev);
+        return;
+    }
+
+    for (auto& m : m_lTouchDevices) {
+        const auto PTOUCHDEV = &m;
+
+        setConfig(PTOUCHDEV);
     }
 }
 
