@@ -144,6 +144,7 @@ class CCompositor {
     CWorkspace*    getWorkspaceByID(const int&);
     CWorkspace*    getWorkspaceByName(const std::string&);
     CWorkspace*    getWorkspaceByString(const std::string&);
+    CWorkspace*    getWorkspaceByWorkspaceHandle(const wlr_ext_workspace_handle_v1*);
     void           sanityCheckWorkspaces();
     void           updateWorkspaceWindowDecos(const int&);
     int            getWindowsOnWorkspace(const int&);
@@ -169,7 +170,7 @@ class CCompositor {
     void           moveWorkspaceToMonitor(CWorkspace*, CMonitor*);
     void           swapActiveWorkspaces(CMonitor*, CMonitor*);
     CMonitor*      getMonitorFromString(const std::string&);
-    bool           workspaceIDOutOfBounds(const int&);
+    bool           workspaceIDOutOfBounds(const int64_t&);
     void           setWindowFullscreen(CWindow*, bool, eFullscreenMode);
     void           updateFullscreenFadeOnWorkspace(CWorkspace*);
     CWindow*       getX11Parent(CWindow*);

@@ -116,6 +116,7 @@ struct SWindowAdditionalConfigData {
     CWindowOverridableVar<bool> forceNoAnims          = false;
     CWindowOverridableVar<bool> forceNoBorder         = false;
     CWindowOverridableVar<bool> forceNoShadow         = false;
+    CWindowOverridableVar<bool> forceNoDim            = false;
     CWindowOverridableVar<bool> windowDanceCompat     = false;
     CWindowOverridableVar<bool> noMaxSize             = false;
     CWindowOverridableVar<bool> dimAround             = false;
@@ -158,6 +159,8 @@ class CWindow {
     DYNLISTENER(toplevelActivate);
     DYNLISTENER(toplevelFullscreen);
     DYNLISTENER(setOverrideRedirect);
+    DYNLISTENER(associateX11);
+    DYNLISTENER(dissociateX11);
     // DYNLISTENER(newSubsurfaceWindow);
 
     CWLSurface            m_pWLSurface;
@@ -188,7 +191,7 @@ class CWindow {
     bool        m_bIsPseudotiled = false;
     Vector2D    m_vPseudoSize    = Vector2D(0, 0);
 
-    uint64_t    m_iTags          = 0;
+    bool        m_bFirstMap      = false; // for layouts
     bool        m_bIsFloating    = false;
     bool        m_bDraggingTiled = false; // for dragging around tiled windows
     bool        m_bIsFullscreen  = false;

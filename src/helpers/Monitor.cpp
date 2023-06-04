@@ -145,7 +145,7 @@ void CMonitor::onConnect(bool noRule) {
     setupDefaultWS(monitorRule);
 
     for (auto& ws : g_pCompositor->m_vWorkspaces) {
-        if (ws->m_szLastMonitor == szName) {
+        if (ws->m_szLastMonitor == szName || g_pCompositor->m_vMonitors.size() == 1 /* avoid lost workspaces on recover */) {
             g_pCompositor->moveWorkspaceToMonitor(ws.get(), this);
             ws->startAnim(true, true, true);
             ws->m_szLastMonitor = "";
@@ -503,7 +503,10 @@ void CMonitor::changeWorkspace(CWorkspace* const pWorkspace, bool internal) {
         return;
 
     if (pWorkspace->m_bIsSpecialWorkspace) {
-        Debug::log(ERR, "BUG THIS: Attempted to changeWorkspace to special!");
+        if (specialWorkspaceID != pWorkspace->m_iID) {
+            Debug::log(LOG, "changeworkspace on special, togglespecialworkspace to id %i", pWorkspace->m_iID);
+            g_pKeybindManager->m_mDispatchers["togglespecialworkspace"](pWorkspace->m_szName == "special" ? "" : pWorkspace->m_szName);
+        }
         return;
     }
 
@@ -535,7 +538,7 @@ void CMonitor::changeWorkspace(CWorkspace* const pWorkspace, bool internal) {
             g_pCompositor->focusWindow(PLASTWINDOW);
         else {
             g_pCompositor->focusWindow(nullptr);
-            g_pInputManager->refocus();
+            g_pInputManager->simulateMouseMovement();
         }
 
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
@@ -576,10 +579,22 @@ void CMonitor::setSpecialWorkspace(CWorkspace* const pWorkspace) {
         return;
     }
 
+    if (specialWorkspaceID) {
+        if (const auto EXISTINGSPECIAL = g_pCompositor->getWorkspaceByID(specialWorkspaceID); EXISTINGSPECIAL)
+            EXISTINGSPECIAL->startAnim(false, false);
+    }
+
     // open special
     pWorkspace->m_iMonitorID = ID;
     specialWorkspaceID       = pWorkspace->m_iID;
     pWorkspace->startAnim(true, true);
+
+    for (auto& w : g_pCompositor->m_vWindows) {
+        if (w->m_iWorkspaceID == pWorkspace->m_iID) {
+            w->m_iMonitorID = ID;
+            w->updateSurfaceOutputs();
+        }
+    }
 
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
 

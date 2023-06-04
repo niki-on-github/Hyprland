@@ -3,14 +3,16 @@
 #include "../defines.hpp"
 #include <any>
 
-enum ANIMATEDVARTYPE {
+enum ANIMATEDVARTYPE
+{
     AVARTYPE_INVALID = -1,
     AVARTYPE_FLOAT,
     AVARTYPE_VECTOR,
     AVARTYPE_COLOR
 };
 
-enum AVARDAMAGEPOLICY {
+enum AVARDAMAGEPOLICY
+{
     AVARDAMAGE_NONE   = -1,
     AVARDAMAGE_ENTIRE = 0,
     AVARDAMAGE_BORDER,
@@ -29,6 +31,11 @@ class CAnimatedVariable {
 
     void create(ANIMATEDVARTYPE, SAnimationPropertyConfig*, void* pWindow, AVARDAMAGEPOLICY);
     void create(ANIMATEDVARTYPE, std::any val, SAnimationPropertyConfig*, void* pWindow, AVARDAMAGEPOLICY);
+
+    CAnimatedVariable(const CAnimatedVariable&) = delete;
+    CAnimatedVariable(CAnimatedVariable&&)      = delete;
+    CAnimatedVariable& operator=(const CAnimatedVariable&) = delete;
+    CAnimatedVariable& operator=(CAnimatedVariable&&) = delete;
 
     ~CAnimatedVariable();
 
@@ -209,10 +216,17 @@ class CAnimatedVariable {
         m_bRemoveBeginAfterRan = remove;
     }
 
+    /*  Sets the update callback, called every time the value is animated and a step is done
+        Warning: calling unregisterVar/registerVar in this handler will cause UB */
+    void setUpdateCallback(std::function<void(void* thisptr)> func) {
+        m_fUpdateCallback = func;
+    }
+
     /*  resets all callbacks. Does not call any. */
     void resetAllCallbacks() {
         m_fBeginCallback       = nullptr;
         m_fEndCallback         = nullptr;
+        m_fUpdateCallback      = nullptr;
         m_bRemoveBeginAfterRan = false;
         m_bRemoveEndAfterRan   = false;
     }
@@ -249,12 +263,15 @@ class CAnimatedVariable {
     bool                                  m_bRemoveBeginAfterRan = true;
     std::function<void(void* thisptr)>    m_fEndCallback;
     std::function<void(void* thisptr)>    m_fBeginCallback;
+    std::function<void(void* thisptr)>    m_fUpdateCallback;
 
     // methods
     void onAnimationEnd() {
         if (m_fEndCallback) {
+            // loading m_bRemoveEndAfterRan before calling the callback allows the callback to delete this animation safely if it is false.
+            auto removeEndCallback = m_bRemoveEndAfterRan;
             m_fEndCallback(this);
-            if (m_bRemoveEndAfterRan)
+            if (removeEndCallback)
                 m_fEndCallback = nullptr; // reset
         }
     }

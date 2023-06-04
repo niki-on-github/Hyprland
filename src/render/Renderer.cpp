@@ -181,7 +181,7 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
 
     // then render windows over fullscreen.
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID != pWorkspaceWindow->m_iWorkspaceID || (!w->m_bCreatedOverFullscreen && !w->m_bPinned) || (!w->m_bIsMapped && !w->m_bFadingOut))
+        if (w->m_iWorkspaceID != pWorkspaceWindow->m_iWorkspaceID || (!w->m_bCreatedOverFullscreen && !w->m_bPinned) || (!w->m_bIsMapped && !w->m_bFadingOut) || w->m_bIsFullscreen)
             continue;
 
         renderWindow(w.get(), pMonitor, time, true, RENDER_PASS_ALL);
@@ -282,6 +282,8 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
     g_pHyprOpenGL->m_pCurrentWindow = pWindow;
 
+    EMIT_HOOK_EVENT("render", RENDER_PRE_WINDOW);
+
     if (*PDIMAROUND && pWindow->m_sAdditionalConfigData.dimAround && !m_bRenderingSnapshot && mode != RENDER_PASS_POPUP) {
         wlr_box monbox = {0, 0, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.x, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.y};
         g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, *PDIMAROUND * renderdata.alpha * renderdata.fadeAlpha));
@@ -368,6 +370,8 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             wlr_xdg_surface_for_each_popup_surface(pWindow->m_uSurface.xdg, renderSurface, &renderdata);
         }
     }
+
+    EMIT_HOOK_EVENT("render", RENDER_POST_WINDOW);
 
     g_pHyprOpenGL->m_pCurrentWindow     = nullptr;
     g_pHyprOpenGL->m_RenderData.clipBox = {0, 0, 0, 0};
@@ -791,7 +795,8 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     if (!*PDAMAGEBLINK)
         damageBlinkCleanup = 0;
 
-    static bool firstLaunch = true;
+    static bool firstLaunch           = true;
+    static bool firstLaunchAnimActive = true;
 
     float       zoomInFactorFirstLaunch = 1.f;
 
@@ -800,9 +805,11 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         m_tRenderTimer.reset();
     }
 
-    if (m_tRenderTimer.getSeconds() < 1.5f) { // TODO: make the animation system more damage-flexible so that this can be migrated to there
+    if (m_tRenderTimer.getSeconds() < 1.5f && firstLaunchAnimActive) { // TODO: make the animation system more damage-flexible so that this can be migrated to there
         zoomInFactorFirstLaunch = 2.f - g_pAnimationManager->getBezier("default")->getYForPoint(m_tRenderTimer.getSeconds() / 1.5);
         damageMonitor(pMonitor);
+    } else {
+        firstLaunchAnimActive = false;
     }
 
     startRender = std::chrono::high_resolution_clock::now();
@@ -1520,11 +1527,15 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
         DELTALESSTHAN(pMonitor->refreshRate, pMonitorRule->refreshRate, 1) && pMonitor->scale == pMonitorRule->scale &&
         ((DELTALESSTHAN(pMonitor->vecPosition.x, pMonitorRule->offset.x, 1) && DELTALESSTHAN(pMonitor->vecPosition.y, pMonitorRule->offset.y, 1)) ||
          pMonitorRule->offset == Vector2D(-1, -1)) &&
-        pMonitor->transform == pMonitorRule->transform && pMonitorRule->enable10bit == pMonitor->enabled10bit) {
+        pMonitor->transform == pMonitorRule->transform && pMonitorRule->enable10bit == pMonitor->enabled10bit &&
+        !memcmp(&pMonitor->customDrmMode, &pMonitorRule->drmMode, sizeof(pMonitor->customDrmMode))) {
 
         Debug::log(LOG, "Not applying a new rule to %s because it's already applied!", pMonitor->szName.c_str());
         return true;
     }
+
+    // Needed in case we are switching from a custom modeline to a standard mode
+    pMonitor->customDrmMode = {};
 
     if (pMonitorRule->scale > 0.1) {
         wlr_output_set_scale(pMonitor->output, pMonitorRule->scale);
@@ -1540,7 +1551,7 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
 
     // loop over modes and choose an appropriate one.
     if (pMonitorRule->resolution != Vector2D() && pMonitorRule->resolution != Vector2D(-1, -1) && pMonitorRule->resolution != Vector2D(-1, -2)) {
-        if (!wl_list_empty(&pMonitor->output->modes)) {
+        if (!wl_list_empty(&pMonitor->output->modes) && pMonitorRule->drmMode.type != DRM_MODE_TYPE_USERDEF) {
             wlr_output_mode* mode;
             bool             found = false;
 
@@ -1599,17 +1610,37 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
                 }
             }
         } else {
-            wlr_output_set_custom_mode(pMonitor->output, (int)pMonitorRule->resolution.x, (int)pMonitorRule->resolution.y, (int)pMonitorRule->refreshRate * 1000);
+            // custom resolution
+            bool fail = false;
+
+            if (pMonitorRule->drmMode.type == DRM_MODE_TYPE_USERDEF) {
+                if (!wlr_output_is_drm(pMonitor->output)) {
+                    Debug::log(ERR, "Tried to set custom modeline on non-DRM output");
+                    fail = true;
+                } else {
+                    auto* mode = wlr_drm_connector_add_mode(pMonitor->output, &pMonitorRule->drmMode);
+                    if (mode) {
+                        wlr_output_set_mode(pMonitor->output, mode);
+                        pMonitor->customDrmMode = pMonitorRule->drmMode;
+                    } else {
+                        Debug::log(ERR, "wlr_drm_connector_add_mode failed");
+                        fail = true;
+                    }
+                }
+            } else {
+                wlr_output_set_custom_mode(pMonitor->output, (int)pMonitorRule->resolution.x, (int)pMonitorRule->resolution.y, (int)pMonitorRule->refreshRate * 1000);
+            }
+
             pMonitor->vecSize     = pMonitorRule->resolution;
             pMonitor->refreshRate = pMonitorRule->refreshRate;
 
-            if (!wlr_output_test(pMonitor->output)) {
+            if (fail || !wlr_output_test(pMonitor->output)) {
                 Debug::log(ERR, "Custom resolution FAILED, falling back to preferred");
 
                 const auto PREFERREDMODE = wlr_output_preferred_mode(pMonitor->output);
 
                 if (!PREFERREDMODE) {
-                    Debug::log(ERR, "Monitor %s has NO PREFERRED MODE, and an INVALID one was requested: %ix%i@%2f", (int)pMonitorRule->resolution.x,
+                    Debug::log(ERR, "Monitor %s has NO PREFERRED MODE, and an INVALID one was requested: %ix%i@%2f", pMonitor->output->name, (int)pMonitorRule->resolution.x,
                                (int)pMonitorRule->resolution.y, (float)pMonitorRule->refreshRate);
                     return true;
                 }
@@ -1621,8 +1652,9 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
                            (int)pMonitorRule->resolution.x, (int)pMonitorRule->resolution.y, (float)pMonitorRule->refreshRate, PREFERREDMODE->width, PREFERREDMODE->height,
                            PREFERREDMODE->refresh / 1000.f);
 
-                pMonitor->refreshRate = PREFERREDMODE->refresh / 1000.f;
-                pMonitor->vecSize     = Vector2D(PREFERREDMODE->width, PREFERREDMODE->height);
+                pMonitor->refreshRate   = PREFERREDMODE->refresh / 1000.f;
+                pMonitor->vecSize       = Vector2D(PREFERREDMODE->width, PREFERREDMODE->height);
+                pMonitor->customDrmMode = {};
             } else {
                 Debug::log(LOG, "Set a custom mode %ix%i@%2f (mode not found in monitor modes)", (int)pMonitorRule->resolution.x, (int)pMonitorRule->resolution.y,
                            (float)pMonitorRule->refreshRate);

@@ -91,8 +91,18 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
 
+    // this can happen if there are no displays hooked up to Hyprland
+    if (PMONITOR == nullptr)
+        return;
+
     if (*PZOOMFACTOR != 1.f)
         g_pHyprRenderer->damageMonitor(PMONITOR);
+
+    if (m_pForcedFocus) {
+        pFoundWindow = m_pForcedFocus;
+        surfacePos   = pFoundWindow->m_vRealPosition.vec();
+        foundSurface = m_pForcedFocus->m_pWLSurface.wlr();
+    }
 
     // constraints
     // All constraints TODO: multiple mice?
@@ -955,6 +965,19 @@ void CInputManager::setPointerConfigs() {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);
             } else if (ACCELPROFILE == "flat") {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT);
+            } else if (ACCELPROFILE.find("custom") == 0) {
+                CVarList args = {ACCELPROFILE, 0, ' '};
+                try {
+                    double              step = std::stod(args[1]);
+                    std::vector<double> points;
+                    for (size_t i = 2; i < args.size(); ++i)
+                        points.push_back(std::stod(args[i]));
+
+                    const auto CONFIG = libinput_config_accel_create(LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
+                    libinput_config_accel_set_points(CONFIG, LIBINPUT_ACCEL_TYPE_MOTION, step, points.size(), points.data());
+                    libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
+                    libinput_config_accel_destroy(CONFIG);
+                } catch (std::exception& e) { Debug::log(ERR, "Invalid values in custom accel profile"); }
             } else {
                 Debug::log(WARN, "Unknown acceleration profile, falling back to default");
             }
@@ -1296,7 +1319,7 @@ void CInputManager::newTouchDevice(wlr_input_device* pDevice) {
         Debug::log(ERR, "Touch Device had no name???"); // logic error
     }
 
-    setTouchDeviceConfigs();
+    setTouchDeviceConfigs(PNEWDEV);
     wlr_cursor_attach_input_device(g_pCompositor->m_sWLRCursor, pDevice);
 
     Debug::log(LOG, "New touch device added at %lx", PNEWDEV);
@@ -1305,18 +1328,18 @@ void CInputManager::newTouchDevice(wlr_input_device* pDevice) {
         &pDevice->events.destroy, [&](void* owner, void* data) { destroyTouchDevice((STouchDevice*)data); }, PNEWDEV, "TouchDevice");
 }
 
-void CInputManager::setTouchDeviceConfigs() {
-    for (auto& m : m_lTouchDevices) {
-        const auto PTOUCHDEV = &m;
+void CInputManager::setTouchDeviceConfigs(STouchDevice* dev) {
 
+    auto setConfig = [&](STouchDevice* const PTOUCHDEV) -> void {
         const auto HASCONFIG = g_pConfigManager->deviceConfigExists(PTOUCHDEV->name);
 
-        if (wlr_input_device_is_libinput(m.pWlrDevice)) {
-            const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(m.pWlrDevice);
+        if (wlr_input_device_is_libinput(PTOUCHDEV->pWlrDevice)) {
+            const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(PTOUCHDEV->pWlrDevice);
 
             const int  ROTATION =
                 std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "transform") : g_pConfigManager->getInt("input:touchdevice:transform"), 0, 7);
-            libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
+            if (libinput_device_config_calibration_has_matrix(LIBINPUTDEV))
+                libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
             const auto OUTPUT = HASCONFIG ? g_pConfigManager->getDeviceString(PTOUCHDEV->name, "output") : g_pConfigManager->getString("input:touchdevice:output");
             if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY)
@@ -1324,6 +1347,17 @@ void CInputManager::setTouchDeviceConfigs() {
             else
                 PTOUCHDEV->boundOutput = "";
         }
+    };
+
+    if (dev) {
+        setConfig(dev);
+        return;
+    }
+
+    for (auto& m : m_lTouchDevices) {
+        const auto PTOUCHDEV = &m;
+
+        setConfig(PTOUCHDEV);
     }
 }
 

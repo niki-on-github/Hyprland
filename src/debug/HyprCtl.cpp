@@ -14,6 +14,20 @@
 #include <sstream>
 #include <string>
 
+static void trimTrailingComma(std::string& str) {
+    if (!str.empty() && str.back() == ',')
+        str.pop_back();
+}
+
+static std::string getWorkspaceNameFromSpecialID(const int workspaceID) {
+    if (workspaceID == 0)
+        return "";
+    const auto* workspace = g_pCompositor->getWorkspaceByID(workspaceID);
+    if (!workspace)
+        return "";
+    return workspace->m_szName;
+}
+
 std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
     std::string result = "";
     if (format == HyprCtl::FORMAT_JSON) {
@@ -40,6 +54,10 @@ std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
         "id": %i,
         "name": "%s"
     },
+    "specialWorkspace": {
+        "id": %i,
+        "name": "%s"
+    },
     "reserved": [%i, %i, %i, %i],
     "scale": %.2f,
     "transform": %i,
@@ -50,13 +68,13 @@ std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 m->ID, escapeJSONStrings(m->szName).c_str(), escapeJSONStrings(m->output->description ? m->output->description : "").c_str(),
                 (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""), (m->output->serial ? m->output->serial : ""), (int)m->vecPixelSize.x,
                 (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y, m->activeWorkspace,
-                escapeJSONStrings(g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName).c_str(), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
+                escapeJSONStrings(g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName).c_str(), m->specialWorkspaceID,
+                escapeJSONStrings(getWorkspaceNameFromSpecialID(m->specialWorkspaceID)).c_str(), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
                 (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "true" : "false"),
                 (m->dpmsStatus ? "true" : "false"), (m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED ? "true" : "false"));
         }
 
-        // remove trailing comma
-        result.pop_back();
+        trimTrailingComma(result);
 
         result += "]";
     } else {
@@ -64,14 +82,16 @@ std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
             if (!m->output)
                 continue;
 
-            result += getFormat("Monitor %s (ID %i):\n\t%ix%i@%f at %ix%i\n\tdescription: %s\n\tmake: %s\n\tmodel: %s\n\tserial: %s\n\tactive workspace: %i (%s)\n\treserved: %i "
+            result += getFormat("Monitor %s (ID %i):\n\t%ix%i@%f at %ix%i\n\tdescription: %s\n\tmake: %s\n\tmodel: %s\n\tserial: %s\n\tactive workspace: %i (%s)\n\tspecial "
+                                "workspace: %i (%s)\n\treserved: %i "
                                 "%i %i %i\n\tscale: %.2f\n\ttransform: "
                                 "%i\n\tfocused: %s\n\tdpmsStatus: %i\n\tvrr: %i\n\n",
                                 m->szName.c_str(), m->ID, (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y,
                                 (m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""),
                                 (m->output->serial ? m->output->serial : ""), m->activeWorkspace, g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName.c_str(),
-                                (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y, (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale,
-                                (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"), (int)m->dpmsStatus,
+                                m->specialWorkspaceID, getWorkspaceNameFromSpecialID(m->specialWorkspaceID).c_str(), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
+                                (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform,
+                                (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"), (int)m->dpmsStatus,
                                 (int)(m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED));
         }
     }
@@ -175,9 +195,7 @@ std::string clientsRequest(HyprCtl::eHyprCtlOutputFormat format) {
             result += getWindowData(w.get(), format);
         }
 
-        // remove trailing comma
-        if (result != "[")
-            result.pop_back();
+        trimTrailingComma(result);
 
         result += "]";
     } else {
@@ -227,7 +245,7 @@ std::string workspacesRequest(HyprCtl::eHyprCtlOutputFormat format) {
             result += ",";
         }
 
-        result.pop_back();
+        trimTrailingComma(result);
         result += "]";
     } else {
         for (auto& w : g_pCompositor->m_vWorkspaces) {
@@ -285,8 +303,7 @@ std::string layersRequest(HyprCtl::eHyprCtlOutputFormat format) {
                         layer.get(), layer->geometry.x, layer->geometry.y, layer->geometry.width, layer->geometry.height, escapeJSONStrings(layer->szNamespace).c_str());
                 }
 
-                // remove trailing comma
-                result.pop_back();
+                trimTrailingComma(result);
 
                 if (level.size() > 0)
                     result += "\n        ";
@@ -296,14 +313,12 @@ std::string layersRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 layerLevel++;
             }
 
-            // remove trailing comma
-            result.pop_back();
+            trimTrailingComma(result);
 
             result += "\n    }\n},";
         }
 
-        // remove trailing comma
-        result.pop_back();
+        trimTrailingComma(result);
 
         result += "\n}\n";
 
@@ -347,8 +362,7 @@ std::string devicesRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 wlr_input_device_is_libinput(m.mouse) ? libinput_device_config_accel_get_default_speed((libinput_device*)wlr_libinput_get_device_handle(m.mouse)) : 0.f);
         }
 
-        // remove trailing comma
-        result.pop_back();
+        trimTrailingComma(result);
         result += "\n],\n";
 
         result += "\"keyboards\": [\n";
@@ -371,8 +385,7 @@ std::string devicesRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 escapeJSONStrings(KM).c_str(), (k.active ? "true" : "false"));
         }
 
-        // remove trailing comma
-        result.pop_back();
+        trimTrailingComma(result);
         result += "\n],\n";
 
         result += "\"tablets\": [\n";
@@ -409,8 +422,7 @@ std::string devicesRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 &d, d.wlrTabletTool ? d.wlrTabletTool->data : 0);
         }
 
-        // remove trailing comma
-        result.pop_back();
+        trimTrailingComma(result);
         result += "\n],\n";
 
         result += "\"touch\": [\n";
@@ -424,9 +436,7 @@ std::string devicesRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 &d, d.name.c_str());
         }
 
-        // remove trailing comma
-        if (result[result.size() - 1] == ',')
-            result.pop_back();
+        trimTrailingComma(result);
         result += "\n],\n";
 
         result += "\"switches\": [\n";
@@ -440,9 +450,7 @@ std::string devicesRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 &d, d.pWlrDevice ? d.pWlrDevice->name : "");
         }
 
-        // remove trailing comma
-        if (result[result.size() - 1] == ',')
-            result.pop_back();
+        trimTrailingComma(result);
         result += "\n]\n";
 
         result += "}\n";
@@ -540,7 +548,7 @@ std::string animationsRequest(HyprCtl::eHyprCtlOutputFormat format) {
                              bz.first.c_str());
         }
 
-        ret.pop_back();
+        trimTrailingComma(ret);
 
         ret += "]]";
     }
@@ -564,7 +572,7 @@ std::string globalShortcutsRequest(HyprCtl::eHyprCtlOutputFormat format) {
 },)#",
                              escapeJSONStrings(sh.appid + ":" + sh.id).c_str(), escapeJSONStrings(sh.description).c_str());
         }
-        ret.pop_back();
+        trimTrailingComma(ret);
         ret += "]\n";
     }
 
@@ -609,7 +617,7 @@ std::string bindsRequest(HyprCtl::eHyprCtlOutputFormat format) {
                 kb.locked ? "true" : "false", kb.mouse ? "true" : "false", kb.release ? "true" : "false", kb.repeat ? "true" : "false", kb.modmask,
                 escapeJSONStrings(kb.submap).c_str(), escapeJSONStrings(kb.key).c_str(), kb.keycode, escapeJSONStrings(kb.handler).c_str(), escapeJSONStrings(kb.arg).c_str());
         }
-        ret.pop_back();
+        trimTrailingComma(ret);
         ret += "]";
     }
 
@@ -659,8 +667,7 @@ std::string versionRequest(HyprCtl::eHyprCtlOutputFormat format) {
         result += "\"no xwayland\",";
 #endif
 
-        if (result[result.length() - 1] == ',')
-            result.pop_back();
+        trimTrailingComma(result);
 
         result += "]\n}";
 
@@ -722,7 +729,7 @@ std::string dispatchKeyword(std::string in) {
     }
 
     // decorations will probably need a repaint
-    if (COMMAND.contains("decoration:") || COMMAND.contains("border")) {
+    if (COMMAND.contains("decoration:") || COMMAND.contains("border") || COMMAND == "workspace") {
         for (auto& m : g_pCompositor->m_vMonitors) {
             g_pHyprRenderer->damageMonitor(m.get());
             g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
@@ -961,6 +968,8 @@ std::string dispatchSetProp(std::string request) {
             PWINDOW->m_sAdditionalConfigData.forceNoBorder.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "forcenoshadow") {
             PWINDOW->m_sAdditionalConfigData.forceNoShadow.forceSetIgnoreLocked(configStringToInt(VAL), lock);
+        } else if (PROP == "forcenodim") {
+            PWINDOW->m_sAdditionalConfigData.forceNoDim.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "windowdancecompat") {
             PWINDOW->m_sAdditionalConfigData.windowDanceCompat.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "nomaxsize") {

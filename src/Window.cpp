@@ -197,7 +197,16 @@ void CWindow::createToplevelHandle() {
 
     // handle events
     hyprListener_toplevelActivate.initCallback(
-        &m_phForeignToplevel->events.request_activate, [&](void* owner, void* data) { g_pCompositor->focusWindow(this); }, this, "Toplevel");
+        &m_phForeignToplevel->events.request_activate,
+        [&](void* owner, void* data) {
+            if (isHidden() && m_sGroupData.pNextWindow) {
+                // grouped, change the current to us
+                setGroupCurrent(this);
+            }
+
+            g_pCompositor->focusWindow(this);
+        },
+        this, "Toplevel");
 
     hyprListener_toplevelFullscreen.initCallback(
         &m_phForeignToplevel->events.request_fullscreen,
@@ -388,7 +397,8 @@ void CWindow::onMap() {
 
     g_pCompositor->m_vWindowFocusHistory.push_back(this);
 
-    hyprListener_unmapWindow.initCallback(m_bIsX11 ? &m_uSurface.xwayland->events.unmap : &m_uSurface.xdg->events.unmap, &Events::listener_unmapWindow, this, "CWindow");
+    hyprListener_unmapWindow.initCallback(m_bIsX11 ? &m_uSurface.xwayland->surface->events.unmap : &m_uSurface.xdg->surface->events.unmap, &Events::listener_unmapWindow, this,
+                                          "CWindow");
 }
 
 void CWindow::onBorderAngleAnimEnd(void* ptr) {
@@ -426,6 +436,8 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
         m_sAdditionalConfigData.forceNoBorder = true;
     } else if (r.szRule == "noshadow") {
         m_sAdditionalConfigData.forceNoShadow = true;
+    } else if (r.szRule == "nodim") {
+        m_sAdditionalConfigData.forceNoDim = true;
     } else if (r.szRule == "forcergbx") {
         m_sAdditionalConfigData.forceRGBX = true;
     } else if (r.szRule == "opaque") {
@@ -486,6 +498,7 @@ void CWindow::updateDynamicRules() {
     m_sAdditionalConfigData.forceNoBlur      = false;
     m_sAdditionalConfigData.forceNoBorder    = false;
     m_sAdditionalConfigData.forceNoShadow    = false;
+    m_sAdditionalConfigData.forceNoDim       = false;
     if (!m_sAdditionalConfigData.forceOpaqueOverridden)
         m_sAdditionalConfigData.forceOpaque = false;
     m_sAdditionalConfigData.forceNoAnims   = false;
@@ -677,8 +690,7 @@ bool CWindow::opaque() {
         return true;
 
     const auto EXTENTS = pixman_region32_extents(&m_uSurface.xdg->surface->opaque_region);
-    if (EXTENTS->x2 - EXTENTS->x1 >= m_uSurface.xdg->surface->current.buffer_width
-        && EXTENTS->y2 - EXTENTS->y1 >= m_uSurface.xdg->surface->current.buffer_height)
+    if (EXTENTS->x2 - EXTENTS->x1 >= m_uSurface.xdg->surface->current.buffer_width && EXTENTS->y2 - EXTENTS->y1 >= m_uSurface.xdg->surface->current.buffer_height)
         return true;
 
     return false;
