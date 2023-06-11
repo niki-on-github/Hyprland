@@ -100,10 +100,10 @@ struct SWindowSpecialRenderData {
     CWindowOverridableVar<int64_t> inactiveBorderColor = -1; // -1 means unset
 
     // set by the layout
-    int  borderSize = -1;
-    bool rounding   = true;
-    bool border     = true;
-    bool decorate   = true;
+    CWindowOverridableVar<int> borderSize = -1; // -1 means unset
+    bool                       rounding   = true;
+    bool                       border     = true;
+    bool                       decorate   = true;
 };
 
 struct SWindowAdditionalConfigData {
@@ -288,6 +288,7 @@ class CWindow {
     struct SGroupData {
         CWindow* pNextWindow = nullptr; // nullptr means no grouping. Self means single group.
         bool     head        = false;
+        bool     locked      = false;
     } m_sGroupData;
 
     // For the list lookup
