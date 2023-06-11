@@ -91,7 +91,9 @@ void CHyprMasterLayout::onWindowCreatedTiling(CWindow* pWindow) {
                       getNodeFromWindow(g_pCompositor->m_pLastWindow) :
                       getMasterNodeOnWorkspace(pWindow->m_iWorkspaceID);
 
-    if (OPENINGON && OPENINGON->pWindow->m_sGroupData.pNextWindow && OPENINGON != PNODE && !g_pKeybindManager->m_bGroupsLocked) {
+    if (OPENINGON && OPENINGON->pWindow->m_sGroupData.pNextWindow && !OPENINGON->pWindow->getGroupHead()->m_sGroupData.locked && // target is an unlocked group
+        (!pWindow->m_sGroupData.pNextWindow || !pWindow->getGroupHead()->m_sGroupData.locked)                                    // source is not group or is an unlocked group
+        && OPENINGON != PNODE && !g_pKeybindManager->m_bGroupsLocked) {
         m_lMasterNodesData.remove(*PNODE);
 
         OPENINGON->pWindow->insertWindowToGroup(pWindow);
@@ -274,7 +276,7 @@ void CHyprMasterLayout::calculateWorkspace(const int& ws) {
     if ((WINDOWS < 2) && !centerMasterWindow) {
         PMASTERNODE->position = PMONITOR->vecReservedTopLeft + PMONITOR->vecPosition;
         PMASTERNODE->size     = Vector2D(PMONITOR->vecSize.x - PMONITOR->vecReservedTopLeft.x - PMONITOR->vecReservedBottomRight.x,
-                                     PMONITOR->vecSize.y - PMONITOR->vecReservedBottomRight.y - PMONITOR->vecReservedTopLeft.y);
+                                         PMONITOR->vecSize.y - PMONITOR->vecReservedBottomRight.y - PMONITOR->vecReservedTopLeft.y);
         applyNodeDataToWindow(PMASTERNODE);
         return;
     } else if (orientation == ORIENTATION_LEFT || orientation == ORIENTATION_RIGHT || (orientation == ORIENTATION_CENTER && STACKWINDOWS <= 1)) {
@@ -491,9 +493,10 @@ void CHyprMasterLayout::applyNodeDataToWindow(SMasterNodeData* pNode) {
     static auto* const PGAPSOUT    = &g_pConfigManager->getConfigValuePtr("general:gaps_out")->intValue;
     static auto* const PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
 
-    auto               gapsIn     = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
-    auto               gapsOut    = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
-    auto               borderSize = WORKSPACERULE.borderSize.value_or(*PBORDERSIZE);
+    auto               gapsIn  = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
+    auto               gapsOut = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
+    auto               borderSize =
+        PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() != -1 ? PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() : WORKSPACERULE.borderSize.value_or(*PBORDERSIZE);
 
     if (!g_pCompositor->windowValidMapped(PWINDOW)) {
         Debug::log(ERR, "Node %lx holding invalid window %lx!!", pNode, PWINDOW);

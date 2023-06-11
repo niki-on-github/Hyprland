@@ -122,9 +122,10 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
     static auto* const PGAPSOUT    = &g_pConfigManager->getConfigValuePtr("general:gaps_out")->intValue;
     static auto* const PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
 
-    auto               gapsIn     = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
-    auto               gapsOut    = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
-    auto               borderSize = WORKSPACERULE.borderSize.value_or(*PBORDERSIZE);
+    auto               gapsIn  = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
+    auto               gapsOut = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
+    auto               borderSize =
+        PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() != -1 ? PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() : WORKSPACERULE.borderSize.value_or(*PBORDERSIZE);
 
     if (!g_pCompositor->windowExists(PWINDOW) || !PWINDOW->m_bIsMapped) {
         Debug::log(ERR, "Node %lx holding invalid window %lx!!", pNode, PWINDOW);
@@ -310,7 +311,9 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow) {
     }
 
     // if it's a group, add the window
-    if (OPENINGON->pWindow->m_sGroupData.pNextWindow && !g_pKeybindManager->m_bGroupsLocked) {
+    if (OPENINGON->pWindow->m_sGroupData.pNextWindow && !OPENINGON->pWindow->getGroupHead()->m_sGroupData.locked && // target is an unlocked group
+        (!pWindow->m_sGroupData.pNextWindow || !pWindow->getGroupHead()->m_sGroupData.locked)                       // source is not group or is a unlocked group
+        && !g_pKeybindManager->m_bGroupsLocked) {
         m_lDwindleNodesData.remove(*PNODE);
 
         OPENINGON->pWindow->insertWindowToGroup(pWindow);
