@@ -7,6 +7,7 @@
 #include "SubsurfaceTree.hpp"
 #include "AnimatedVariable.hpp"
 #include "WLSurface.hpp"
+#include "Region.hpp"
 
 struct SLayerRule {
     std::string targetNamespace = "";
@@ -48,8 +49,10 @@ struct SLayerSurface {
     bool                      noProcess     = false;
     bool                      noAnimations  = false;
 
-    bool                      forceBlur  = false;
-    bool                      ignoreZero = false;
+    bool                      forceBlur        = false;
+    int                       xray             = -1;
+    bool                      ignoreAlpha      = false;
+    float                     ignoreAlphaValue = 0.f;
 
     // For the list lookup
     bool operator==(const SLayerSurface& rhs) const {
@@ -143,7 +146,7 @@ struct SMouse {
     wlr_pointer_constraint_v1* currentConstraint = nullptr;
     bool                       constraintActive  = false;
 
-    pixman_region32_t          confinedTo;
+    CRegion                    confinedTo;
 
     std::string                name = "";
 
@@ -163,13 +166,20 @@ struct SConstraint {
     SMouse*                    pMouse     = nullptr;
     wlr_pointer_constraint_v1* constraint = nullptr;
 
-    bool                       hintSet = false;
-    Vector2D                   positionHint; // the position hint, but will be set to the current cursor pos if not set.
+    bool                       active = false;
+
+    bool                       hintSet             = false;
+    Vector2D                   positionHint        = {-1, -1}; // the position hint, but will use cursorPosOnActivate if unset
+    Vector2D                   cursorPosOnActivate = {-1, -1};
 
     DYNLISTENER(setConstraintRegion);
     DYNLISTENER(destroyConstraint);
 
-    bool operator==(const SConstraint& b) const {
+    CRegion  getLogicCoordsRegion();
+    Vector2D getLogicConstraintPos();
+    Vector2D getLogicConstraintSize();
+
+    bool     operator==(const SConstraint& b) const {
         return constraint == b.constraint;
     }
 };
@@ -188,9 +198,13 @@ struct SXDGPopup {
     DYNLISTENER(mapPopupXDG);
     DYNLISTENER(unmapPopupXDG);
     DYNLISTENER(commitPopupXDG);
+    DYNLISTENER(repositionPopupXDG);
 
     double            lx;
     double            ly;
+
+    Vector2D          lastPos             = {};
+    bool              repositionRequested = false;
 
     SSurfaceTreeNode* pSurfaceTree = nullptr;
 
@@ -239,7 +253,8 @@ struct STablet {
 
     std::string           name = "";
 
-    bool                  operator==(const STablet& b) const {
+    //
+    bool operator==(const STablet& b) const {
         return wlrDevice == b.wlrDevice;
     }
 };
@@ -301,8 +316,9 @@ struct SSwipeGesture {
 
     double      delta = 0;
 
-    float       avgSpeed    = 0;
-    int         speedPoints = 0;
+    int         initialDirection = 0;
+    float       avgSpeed         = 0;
+    int         speedPoints      = 0;
 
     CMonitor*   pMonitor = nullptr;
 };
@@ -375,5 +391,16 @@ struct SSwitchDevice {
 
     bool operator==(const SSwitchDevice& other) const {
         return pWlrDevice == other.pWlrDevice;
+    }
+};
+
+struct STearingController {
+    wlr_tearing_control_v1* pWlrHint = nullptr;
+
+    DYNLISTENER(set);
+    DYNLISTENER(destroy);
+
+    bool operator==(const STearingController& other) {
+        return pWlrHint == other.pWlrHint;
     }
 };

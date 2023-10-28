@@ -11,22 +11,26 @@ class CConfigManager;
 class CPluginSystem;
 
 struct SKeybind {
-    std::string key     = "";
-    int         keycode = -1;
-    uint32_t    modmask = 0;
-    std::string handler = "";
-    std::string arg     = "";
-    bool        locked  = false;
-    std::string submap  = "";
-    bool        release = false;
-    bool        repeat  = false;
-    bool        mouse   = false;
+    std::string key          = "";
+    int         keycode      = -1;
+    uint32_t    modmask      = 0;
+    std::string handler      = "";
+    std::string arg          = "";
+    bool        locked       = false;
+    std::string submap       = "";
+    bool        release      = false;
+    bool        repeat       = false;
+    bool        mouse        = false;
+    bool        nonConsuming = false;
+    bool        transparent  = false;
+    bool        ignoreMods   = false;
 
     // DO NOT INITIALIZE
     bool shadowed = false;
 };
 
-enum eFocusWindowMode {
+enum eFocusWindowMode
+{
     MODE_CLASS_REGEX = 0,
     MODE_TITLE_REGEX,
     MODE_ADDRESS,
@@ -65,8 +69,6 @@ class CKeybindManager {
 
     inline static std::string m_szCurrentSelectedSubmap = "";
 
-    xkb_keysym_t              m_kHeldBack = 0;
-
     SKeybind*                 m_pActiveKeybind = nullptr;
 
     uint32_t                  m_uTimeLastMs    = 0;
@@ -74,6 +76,7 @@ class CKeybindManager {
     uint32_t                  m_uLastMouseCode = 0;
 
     bool                      m_bIsMouseBindActive = false;
+    std::vector<SKeybind*>    m_vPressedSpecialBinds;
 
     int                       m_iPassPressed = -1; // used for pass
 
@@ -90,6 +93,9 @@ class CKeybindManager {
     bool                      ensureMouseBindState();
 
     static bool               tryMoveFocusToMonitor(CMonitor* monitor);
+    static void               moveWindowOutOfGroup(CWindow* pWindow, const std::string& dir = "");
+    static void               moveWindowIntoGroup(CWindow* pWindow, CWindow* pWindowInDirection);
+    static void               switchToWindow(CWindow* PWINDOWTOCHANGETO);
 
     // -------------- Dispatchers -------------- //
     static void     killActive(std::string);
@@ -139,10 +145,15 @@ class CKeybindManager {
     static void     pinActive(std::string);
     static void     mouse(std::string);
     static void     bringActiveToTop(std::string);
+    static void     alterZOrder(std::string);
     static void     lockGroups(std::string);
     static void     lockActiveGroup(std::string);
     static void     moveIntoGroup(std::string);
     static void     moveOutOfGroup(std::string);
+    static void     moveGroupWindow(std::string);
+    static void     moveWindowOrGroup(std::string);
+    static void     setIgnoreGroupLock(std::string);
+    static void     denyWindowFromGroup(std::string);
     static void     global(std::string);
 
     friend class CCompositor;

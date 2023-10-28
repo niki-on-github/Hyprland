@@ -1,7 +1,6 @@
 #pragma once
 
 #include "defines.hpp"
-#include "events/Events.hpp"
 #include "helpers/SubsurfaceTree.hpp"
 #include "helpers/AnimatedVariable.hpp"
 #include "render/decorations/IHyprWindowDecoration.hpp"
@@ -9,13 +8,31 @@
 #include "config/ConfigDataValues.hpp"
 #include "helpers/Vector2D.hpp"
 #include "helpers/WLSurface.hpp"
+#include "macros.hpp"
+#include "managers/XWaylandManager.hpp"
 
-enum eIdleInhibitMode {
+enum eIdleInhibitMode
+{
     IDLEINHIBIT_NONE = 0,
     IDLEINHIBIT_ALWAYS,
     IDLEINHIBIT_FULLSCREEN,
     IDLEINHIBIT_FOCUS
 };
+
+enum eGroupRules
+{
+    // effective only during first map, except for _ALWAYS variant
+    GROUP_NONE        = 0,
+    GROUP_SET         = 1 << 0, // Open as new group or add to focused group
+    GROUP_SET_ALWAYS  = 1 << 1,
+    GROUP_BARRED      = 1 << 2, // Don't insert to focused group.
+    GROUP_LOCK        = 1 << 3, // Lock m_sGroupData.lock
+    GROUP_LOCK_ALWAYS = 1 << 4,
+    GROUP_INVADE      = 1 << 5, // Force enter a group, event if lock is engaged
+    GROUP_OVERRIDE    = 1 << 6, // Override other rules
+};
+
+class IWindowTransformer;
 
 template <typename T>
 class CWindowOverridableVar {
@@ -104,6 +121,7 @@ struct SWindowSpecialRenderData {
     bool                       rounding   = true;
     bool                       border     = true;
     bool                       decorate   = true;
+    bool                       shadow     = true;
 };
 
 struct SWindowAdditionalConfigData {
@@ -121,6 +139,11 @@ struct SWindowAdditionalConfigData {
     CWindowOverridableVar<bool> noMaxSize             = false;
     CWindowOverridableVar<bool> dimAround             = false;
     CWindowOverridableVar<bool> forceRGBX             = false;
+    CWindowOverridableVar<bool> keepAspectRatio       = false;
+    CWindowOverridableVar<int>  xray                  = -1; // -1 means unset, takes precedence over the renderdata one
+    CWindowOverridableVar<int>  borderSize            = -1; // -1 means unset, takes precedence over the renderdata one
+    CWindowOverridableVar<bool> forceTearing          = false;
+    CWindowOverridableVar<bool> nearestNeighbor       = false;
 };
 
 struct SWindowRule {
@@ -134,6 +157,7 @@ struct SWindowRule {
     int         bFloating   = -1;
     int         bFullscreen = -1;
     int         bPinned     = -1;
+    std::string szWorkspace = ""; // empty means any
 };
 
 class CWindow {
@@ -182,6 +206,7 @@ class CWindow {
     // for not spamming the protocols
     Vector2D m_vReportedPosition;
     Vector2D m_vReportedSize;
+    Vector2D m_vPendingReportedSize;
 
     // for restoring floating statuses
     Vector2D m_vLastFloatingSize;
@@ -217,15 +242,17 @@ class CWindow {
     bool     m_bIsModal              = false;
     bool     m_bX11DoesntWantBorders = false;
     bool     m_bX11ShouldntFocus     = false;
+    float    m_fX11SurfaceScaledBy   = 1.f;
     //
 
     // For nofocus
     bool m_bNoFocus        = false;
     bool m_bNoInitialFocus = false;
 
-    // initial fullscreen and fullscreen disabled
+    // Fullscreen and Maximize
     bool              m_bWantsInitialFullscreen = false;
     bool              m_bNoFullscreenRequest    = false;
+    bool              m_bNoMaximizeRequest      = false;
 
     SSurfaceTreeNode* m_pSurfaceTree = nullptr;
 
@@ -236,11 +263,12 @@ class CWindow {
     CAnimatedVariable  m_fBorderAngleAnimationProgress;
 
     // Fade in-out
-    CAnimatedVariable m_fAlpha;
-    bool              m_bFadingOut     = false;
-    bool              m_bReadyToDelete = false;
-    Vector2D          m_vOriginalClosedPos;  // these will be used for calculations later on in
-    Vector2D          m_vOriginalClosedSize; // drawing the closing animations
+    CAnimatedVariable        m_fAlpha;
+    bool                     m_bFadingOut     = false;
+    bool                     m_bReadyToDelete = false;
+    Vector2D                 m_vOriginalClosedPos;  // these will be used for calculations later on in
+    Vector2D                 m_vOriginalClosedSize; // drawing the closing animations
+    SWindowDecorationExtents m_eOriginalClosedExtents;
 
     // For pinned (sticky) windows
     bool m_bPinned = false;
@@ -265,6 +293,9 @@ class CWindow {
     SWindowSpecialRenderData    m_sSpecialRenderData;
     SWindowAdditionalConfigData m_sAdditionalConfigData;
 
+    // Transformers
+    std::vector<std::unique_ptr<IWindowTransformer>> m_vTransformers;
+
     // for alpha
     CAnimatedVariable m_fActiveInactiveAlpha;
 
@@ -277,6 +308,9 @@ class CWindow {
     // swallowing
     CWindow* m_pSwallowed = nullptr;
 
+    // focus stuff
+    bool m_bStayFocused = false;
+
     // for toplevel monitor events
     uint64_t m_iLastToplevelMonitorID = -1;
     uint64_t m_iLastSurfaceMonitorID  = -1;
@@ -288,8 +322,12 @@ class CWindow {
     struct SGroupData {
         CWindow* pNextWindow = nullptr; // nullptr means no grouping. Self means single group.
         bool     head        = false;
-        bool     locked      = false;
+        bool     locked      = false; // per group lock
+        bool     deny        = false; // deny window from enter a group or made a group
     } m_sGroupData;
+    uint16_t m_eGroupRules = GROUP_NONE;
+
+    bool     m_bTearingHint = false;
 
     // For the list lookup
     bool operator==(const CWindow& rhs) {
@@ -299,6 +337,7 @@ class CWindow {
 
     // methods
     wlr_box                  getFullWindowBoundingBox();
+    SWindowDecorationExtents getFullWindowExtents();
     wlr_box                  getWindowInputBox();
     wlr_box                  getWindowIdealBoundingBoxIgnoreReserved();
     void                     updateWindowDecos();
@@ -320,19 +359,72 @@ class CWindow {
     SWindowDecorationExtents getFullWindowReservedArea();
     Vector2D                 middle();
     bool                     opaque();
+    float                    rounding();
+    bool                     canBeTorn();
+
+    int                      getRealBorderSize();
+    void                     updateSpecialRenderData();
 
     void                     onBorderAngleAnimEnd(void* ptr);
     bool                     isInCurvedCorner(double x, double y);
     bool                     hasPopupAt(const Vector2D& pos);
 
+    void                     applyGroupRules();
+    void                     createGroup();
+    void                     destroyGroup();
     CWindow*                 getGroupHead();
     CWindow*                 getGroupTail();
     CWindow*                 getGroupCurrent();
+    CWindow*                 getGroupPrevious();
+    CWindow*                 getGroupWindowByIndex(int);
+    int                      getGroupSize();
     void                     setGroupCurrent(CWindow* pWindow);
     void                     insertWindowToGroup(CWindow* pWindow);
     void                     updateGroupOutputs();
+    void                     switchWithWindowInGroup(CWindow* pWindow);
 
   private:
     // For hidden windows and stuff
     bool m_bHidden = false;
+};
+
+/**
+    format specification
+    - 'x', only address, equivalent of (uintpr_t)CWindow*
+    - 'm', with monitor id
+    - 'w', with workspace id
+    - 'c', with application class
+*/
+
+template <typename CharT>
+struct std::formatter<CWindow*, CharT> : std::formatter<CharT> {
+    bool formatAddressOnly = false;
+    bool formatWorkspace   = false;
+    bool formatMonitor     = false;
+    bool formatClass       = false;
+    FORMAT_PARSE(                           //
+        FORMAT_FLAG('x', formatAddressOnly) //
+        FORMAT_FLAG('m', formatMonitor)     //
+        FORMAT_FLAG('w', formatWorkspace)   //
+        FORMAT_FLAG('c', formatClass),
+        CWindow*)
+
+    template <typename FormatContext>
+    auto format(CWindow* const& w, FormatContext& ctx) const {
+        auto&& out = ctx.out();
+        if (formatAddressOnly)
+            return std::format_to(out, "{:x}", (uintptr_t)w);
+        if (!w)
+            return std::format_to(out, "[Window nullptr]");
+
+        std::format_to(out, "[");
+        std::format_to(out, "Window {:x}: title: \"{}\"", (uintptr_t)w, w->m_szTitle);
+        if (formatWorkspace)
+            std::format_to(out, ", workspace: {}", w->m_iWorkspaceID);
+        if (formatMonitor)
+            std::format_to(out, ", monitor: {}", w->m_iMonitorID);
+        if (formatClass)
+            std::format_to(out, ", class: {}", g_pXWaylandManager->getAppIDClass(w));
+        return std::format_to(out, "]");
+    }
 };

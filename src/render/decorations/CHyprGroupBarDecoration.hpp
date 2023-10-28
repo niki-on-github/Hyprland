@@ -4,6 +4,7 @@
 #include <deque>
 #include "../Texture.hpp"
 #include <string>
+#include <memory>
 
 class CTitleTex {
   public:
@@ -32,6 +33,8 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual SWindowDecorationExtents getWindowDecorationReservedArea();
 
+    virtual bool                     allowsInput();
+
   private:
     SWindowDecorationExtents m_seExtents;
 
@@ -43,8 +46,12 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     std::deque<CWindow*>     m_dwGroupMembers;
 
     CTitleTex*               textureFromTitle(const std::string&);
-    void                     clearUnusedTextures();
     void                     invalidateTextures();
 
     void                     refreshGradients();
+
+    struct STitleTexs {
+        // STitleTexs*                            overriden = nullptr; // TODO: make shit shared in-group to decrease VRAM usage.
+        std::deque<std::unique_ptr<CTitleTex>> titleTexs;
+    } m_sTitleTexs;
 };

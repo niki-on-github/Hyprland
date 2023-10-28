@@ -10,6 +10,7 @@ inline static constexpr auto ROUNDED_SHADER_FUNC = [](const std::string colorVar
     pixCoord -= topLeft + fullSize * 0.5;
     pixCoord *= vec2(lessThan(pixCoord, vec2(0.0))) * -2.0 + 1.0;
     pixCoord -= fullSize * 0.5 - radius;
+    pixCoord += vec2(1.0, 1.0) / fullSize; // center the pix dont make it top-left
 
     if (pixCoord.x + pixCoord.y > radius) {
 
@@ -18,20 +19,13 @@ inline static constexpr auto ROUNDED_SHADER_FUNC = [](const std::string colorVar
 	    if (dist > radius)
 	        discard;
 
-	    if (primitiveMultisample == 1 && dist > radius - 1.0) {
-	        float distances = 0.0;
-	        distances += float(length(pixCoord + vec2(0.25, 0.25)) < radius);
-	        distances += float(length(pixCoord + vec2(0.75, 0.25)) < radius);
-	        distances += float(length(pixCoord + vec2(0.25, 0.75)) < radius);
-	        distances += float(length(pixCoord + vec2(0.75, 0.75)) < radius);
+	    if (dist > radius - 1.0) {
+	        float dist = length(pixCoord);
 
-	        if (distances == 0.0)
-		        discard;
-
-	        distances /= 4.0;
+            float normalized = 1.0 - smoothstep(0.0, 1.0, dist - radius + 0.5);
 
 	        )#" +
-        colorVarName + R"#( = )#" + colorVarName + R"#( * distances;
+        colorVarName + R"#( = )#" + colorVarName + R"#( * normalized;
         }
 
     }
@@ -59,8 +53,6 @@ varying vec4 v_color;
 uniform vec2 topLeft;
 uniform vec2 fullSize;
 uniform float radius;
-
-uniform int primitiveMultisample;
 
 void main() {
 
@@ -96,12 +88,11 @@ uniform vec2 fullSize;
 uniform float radius;
 
 uniform int discardOpaque;
-uniform int discardAlphaZero;
+uniform int discardAlpha;
+uniform float discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-
-uniform int primitiveMultisample;
 
 void main() {
 
@@ -109,8 +100,8 @@ void main() {
 
     if (discardOpaque == 1 && pixColor[3] * alpha == 1.0)
 	    discard;
-    
-    if (discardAlphaZero == 1 && pixColor[3] == 0.0)
+
+    if (discardAlpha == 1 && pixColor[3] <= discardAlphaValue)
         discard;
 
     if (applyTint == 1) {
@@ -119,8 +110,10 @@ void main() {
 	    pixColor[2] = pixColor[2] * tint[2];
     }
 
+    if (radius > 0.0) {
     )#" +
     ROUNDED_SHADER_FUNC("pixColor") + R"#(
+    }
 
     gl_FragColor = pixColor * alpha;
 })#";
@@ -145,12 +138,11 @@ uniform vec2 fullSize;
 uniform float radius;
 
 uniform int discardOpaque;
-uniform int discardAlphaZero;
+uniform int discardAlpha;
+uniform int discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-
-uniform int primitiveMultisample;
 
 void main() {
 
@@ -165,8 +157,10 @@ void main() {
 	pixColor[2] = pixColor[2] * tint[2];
     }
 
+    if (radius > 0.0) {
     )#" +
     ROUNDED_SHADER_FUNC("pixColor") + R"#(
+    }
 
     gl_FragColor = pixColor * alpha;
 })#";
@@ -219,6 +213,36 @@ void main() {
 }
 )#";
 
+inline const std::string FRAGBLURFINISH = R"#(
+precision mediump float;
+varying vec2 v_texcoord; // is in 0-1
+uniform sampler2D tex;
+
+uniform float contrast;
+uniform float noise;
+uniform float brightness;
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+    vec4 pixColor = texture2D(tex, v_texcoord);
+
+    // contrast
+    pixColor.rgb = (pixColor.rgb - 0.5) * contrast + 0.5;
+
+    // brightness
+    pixColor.rgb *= brightness;
+
+    // noise
+    float noiseHash = hash(v_texcoord);
+    float noiseAmount = (mod(noiseHash, 1.0) - 0.5);
+    pixColor.rgb += noiseAmount * noise;
+
+    gl_FragColor = pixColor;
+})#";
+
 inline const std::string TEXFRAGSRCEXT = R"#(
 #extension GL_OES_EGL_image_external : require
 
@@ -232,12 +256,11 @@ uniform vec2 fullSize;
 uniform float radius;
 
 uniform int discardOpaque;
-uniform int discardAlphaZero;
+uniform int discardAlpha;
+uniform int discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-
-uniform int primitiveMultisample;
 
 void main() {
 
@@ -252,8 +275,10 @@ void main() {
 	pixColor[2] = pixColor[2] * tint[2];
     }
 
+    if (radius > 0.0) {
     )#" +
     ROUNDED_SHADER_FUNC("pixColor") + R"#(
+    }
 
     gl_FragColor = pixColor * alpha;
 }

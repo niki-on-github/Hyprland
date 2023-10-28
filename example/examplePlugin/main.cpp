@@ -58,8 +58,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::addNotification(PHANDLE, "Hello World from an example plugin!", CColor{0.f, 1.f, 1.f, 1.f}, 5000);
 
-    HyprlandAPI::registerCallbackDynamic(PHANDLE, "activeWindow", [&](void* self, std::any data) { onActiveWindowChange(self, data); });
-    HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, std::any data) { onNewWindow(self, data); });
+    HyprlandAPI::registerCallbackDynamic(PHANDLE, "activeWindow", [&](void* self, SCallbackInfo& info, std::any data) { onActiveWindowChange(self, data); });
+    HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(self, data); });
 
     g_pCustomLayout = std::make_unique<CHyprCustomLayout>();
 
@@ -77,8 +77,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static const auto METHODS = HyprlandAPI::findFunctionsByName(PHANDLE, "processMouseDownNormal");
     g_pMouseDownHook          = HyprlandAPI::createFunctionHook(PHANDLE, METHODS[0].address, (void*)&hkProcessMouseDownNormal);
 
+    static auto* const PBORDERCOLOR = HyprlandAPI::getConfigValue(PHANDLE, "plugin:example:border_color");
+
     // fancy notifications
-    HyprlandAPI::addNotificationV2(PHANDLE, {{"text", "Example hint"}, {"time", (uint64_t)10000}, {"color", CColor(0.2, 0.2, 0.9, 1.0)}, {"icon", ICON_HINT}});
+    HyprlandAPI::addNotificationV2(
+        PHANDLE,
+        {{"text", "Example hint, color " + std::to_string(PBORDERCOLOR->intValue)}, {"time", (uint64_t)10000}, {"color", CColor{PBORDERCOLOR->intValue}}, {"icon", ICON_HINT}});
 
     // Enable our hooks
     g_pFocusHook->hook();

@@ -3,15 +3,17 @@
 #include "HookSystemManager.hpp"
 
 int wlTick(void* data) {
+    if (g_pAnimationManager)
+        g_pAnimationManager->onTicked();
 
-    float refreshRate = g_pHyprRenderer->m_pMostHzMonitor ? g_pHyprRenderer->m_pMostHzMonitor->refreshRate : 60.f;
-
-    wl_event_source_timer_update(g_pAnimationManager->m_pAnimationTick, 1000 / refreshRate);
-
-    if (g_pCompositor->m_bSessionActive && std::ranges::any_of(g_pCompositor->m_vMonitors, [](const auto& mon) { return mon->m_bEnabled && mon->output; })) {
+    if (g_pCompositor->m_bSessionActive && g_pAnimationManager && g_pHookSystem && !g_pCompositor->m_bUnsafeState &&
+        std::ranges::any_of(g_pCompositor->m_vMonitors, [](const auto& mon) { return mon->m_bEnabled && mon->output; })) {
         g_pAnimationManager->tick();
         EMIT_HOOK_EVENT("tick", nullptr);
     }
+
+    if (g_pAnimationManager && g_pAnimationManager->shouldTickForNext())
+        g_pAnimationManager->scheduleTick();
 
     return 0;
 }
@@ -37,11 +39,17 @@ void CAnimationManager::addBezierWithName(std::string name, const Vector2D& p1, 
     m_mBezierCurves[name].setup(&points);
 }
 
-void CAnimationManager::tick() {
+void CAnimationManager::onTicked() {
+    m_bTickScheduled = false;
+}
 
+void CAnimationManager::tick() {
     static std::chrono::time_point lastTick = std::chrono::high_resolution_clock::now();
     m_fLastTickTime                         = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - lastTick).count() / 1000.0;
     lastTick                                = std::chrono::high_resolution_clock::now();
+
+    if (m_vActiveAnimatedVariables.empty())
+        return;
 
     bool               animGlobalDisabled = false;
 
@@ -50,18 +58,13 @@ void CAnimationManager::tick() {
     if (!*PANIMENABLED)
         animGlobalDisabled = true;
 
-    static auto* const              PBORDERSIZE     = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
     static auto* const              PSHADOWSENABLED = &g_pConfigManager->getConfigValuePtr("decoration:drop_shadow")->intValue;
 
     const auto                      DEFAULTBEZIER = m_mBezierCurves.find("default");
 
     std::vector<CAnimatedVariable*> animationEndedVars;
 
-    for (auto& av : m_lAnimatedVariables) {
-
-        // first of all, check if we need to update it at all
-        if (!av->isBeingAnimated())
-            continue;
+    for (auto& av : m_vActiveAnimatedVariables) {
 
         if (av->m_eDamagePolicy == AVARDAMAGE_SHADOW && !*PSHADOWSENABLED) {
             av->warp(false);
@@ -90,6 +93,12 @@ void CAnimationManager::tick() {
             if (!PMONITOR)
                 continue;
             WLRBOXPREV = {(int)PMONITOR->vecPosition.x, (int)PMONITOR->vecPosition.y, (int)PMONITOR->vecSize.x, (int)PMONITOR->vecSize.y};
+
+            // TODO: just make this into a damn callback already vax...
+            for (auto& w : g_pCompositor->m_vWindows) {
+                if (!w->isHidden() && w->m_bIsMapped && w->m_bIsFloating)
+                    g_pHyprRenderer->damageWindow(w.get());
+            }
         } else if (PLAYER) {
             WLRBOXPREV = PLAYER->geometry;
             PMONITOR   = g_pCompositor->getMonitorFromVector(Vector2D(PLAYER->geometry.x, PLAYER->geometry.y) + Vector2D(PLAYER->geometry.width, PLAYER->geometry.height) / 2.f);
@@ -111,7 +120,7 @@ void CAnimationManager::tick() {
                     break;
                 }
 
-                if (SPENT >= 1.f) {
+                if (SPENT >= 1.f || av->m_fBegun == av->m_fGoal) {
                     av->warp(false);
                     break;
                 }
@@ -132,7 +141,7 @@ void CAnimationManager::tick() {
                     break;
                 }
 
-                if (SPENT >= 1.f) {
+                if (SPENT >= 1.f || av->m_vBegun == av->m_vGoal) {
                     av->warp(false);
                     break;
                 }
@@ -153,7 +162,7 @@ void CAnimationManager::tick() {
                     break;
                 }
 
-                if (SPENT >= 1.f) {
+                if (SPENT >= 1.f || av->m_cBegun == av->m_cGoal) {
                     av->warp(false);
                     break;
                 }
@@ -216,7 +225,7 @@ void CAnimationManager::tick() {
                 // damage only the border.
                 static auto* const PROUNDING    = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
                 const auto         ROUNDINGSIZE = *PROUNDING + 1;
-                const auto         BORDERSIZE   = *PBORDERSIZE;
+                const auto         BORDERSIZE   = PWINDOW->getRealBorderSize();
 
                 // damage for old box
                 g_pHyprRenderer->damageBox(WLRBOXPREV.x - BORDERSIZE, WLRBOXPREV.y - BORDERSIZE, WLRBOXPREV.width + 2 * BORDERSIZE, BORDERSIZE + ROUNDINGSIZE);  // top
@@ -247,22 +256,19 @@ void CAnimationManager::tick() {
                     const auto EXTENTS = PDECO->getWindowDecorationExtents();
 
                     wlr_box    dmg = {PWINDOW->m_vRealPosition.vec().x - EXTENTS.topLeft.x, PWINDOW->m_vRealPosition.vec().y - EXTENTS.topLeft.y,
-                                   PWINDOW->m_vRealSize.vec().x + EXTENTS.topLeft.x + EXTENTS.bottomRight.x,
-                                   PWINDOW->m_vRealSize.vec().y + EXTENTS.topLeft.y + EXTENTS.bottomRight.y};
+                                      PWINDOW->m_vRealSize.vec().x + EXTENTS.topLeft.x + EXTENTS.bottomRight.x,
+                                      PWINDOW->m_vRealSize.vec().y + EXTENTS.topLeft.y + EXTENTS.bottomRight.y};
 
                     if (!*PSHADOWIGNOREWINDOW) {
                         // easy, damage the entire box
                         g_pHyprRenderer->damageBox(&dmg);
                     } else {
-                        pixman_region32_t rg;
-                        pixman_region32_init_rect(&rg, dmg.x, dmg.y, dmg.width, dmg.height);
-                        pixman_region32_t wb;
-                        pixman_region32_init_rect(&wb, PWINDOW->m_vRealPosition.vec().x, PWINDOW->m_vRealPosition.vec().y, PWINDOW->m_vRealSize.vec().x,
-                                                  PWINDOW->m_vRealSize.vec().y);
-                        pixman_region32_subtract(&rg, &rg, &wb);
-                        g_pHyprRenderer->damageRegion(&rg);
-                        pixman_region32_fini(&rg);
-                        pixman_region32_fini(&wb);
+                        CRegion rg{dmg.x, dmg.y, dmg.width, dmg.height};
+                        CRegion wb{PWINDOW->m_vRealPosition.vec().x, PWINDOW->m_vRealPosition.vec().y, PWINDOW->m_vRealSize.vec().x, PWINDOW->m_vRealSize.vec().y};
+
+                        rg.subtract(wb);
+
+                        g_pHyprRenderer->damageRegion(rg);
                     }
                 }
 
@@ -343,7 +349,10 @@ void CAnimationManager::animationSlide(CWindow* pWindow, std::string force, bool
 
     const auto PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
 
-    Vector2D   posOffset;
+    if (!PMONITOR)
+        return; // unsafe state most likely
+
+    Vector2D posOffset;
 
     if (force != "") {
         if (force == "bottom")
@@ -420,7 +429,7 @@ void CAnimationManager::onWindowPostCreateClose(CWindow* pWindow, bool close) {
 
     if (pWindow->m_sAdditionalConfigData.animationStyle != "") {
         // the window has config'd special anim
-        if (pWindow->m_sAdditionalConfigData.animationStyle.find("slide") == 0) {
+        if (pWindow->m_sAdditionalConfigData.animationStyle.starts_with("slide")) {
             if (pWindow->m_sAdditionalConfigData.animationStyle.contains(' ')) {
                 // has a direction
                 animationSlide(pWindow, pWindow->m_sAdditionalConfigData.animationStyle.substr(pWindow->m_sAdditionalConfigData.animationStyle.find(' ') + 1), close);
@@ -449,7 +458,7 @@ void CAnimationManager::onWindowPostCreateClose(CWindow* pWindow, bool close) {
             // anim popin, fallback
 
             float minPerc = 0.f;
-            if (ANIMSTYLE.find("%") != 0) {
+            if (!ANIMSTYLE.starts_with("%")) {
                 try {
                     auto percstr = ANIMSTYLE.substr(ANIMSTYLE.find_last_of(' '));
                     minPerc      = std::stoi(percstr.substr(0, percstr.length() - 1));
@@ -464,10 +473,10 @@ void CAnimationManager::onWindowPostCreateClose(CWindow* pWindow, bool close) {
 }
 
 std::string CAnimationManager::styleValidInConfigVar(const std::string& config, const std::string& style) {
-    if (config.find("window") == 0) {
+    if (config.starts_with("window")) {
         if (style == "slide") {
             return "";
-        } else if (style.find("popin") == 0) {
+        } else if (style.starts_with("popin")) {
             // try parsing
             float minPerc = 0.f;
             if (style.find("%") != std::string::npos) {
@@ -488,6 +497,22 @@ std::string CAnimationManager::styleValidInConfigVar(const std::string& config, 
     } else if (config == "workspaces" || config == "specialWorkspace") {
         if (style == "slide" || style == "slidevert" || style == "fade")
             return "";
+        else if (style.starts_with("slidefade")) {
+            // try parsing
+            float movePerc = 0.f;
+            if (style.find("%") != std::string::npos) {
+                try {
+                    auto percstr = style.substr(style.find_last_of(' ') + 1);
+                    movePerc     = std::stoi(percstr.substr(0, percstr.length() - 1));
+                } catch (std::exception& e) { return "invalid movePerc"; }
+
+                return "";
+            }
+
+            movePerc; // fix warning
+
+            return "";
+        }
 
         return "unknown style";
     } else if (config == "borderangle") {
@@ -509,4 +534,30 @@ CBezierCurve* CAnimationManager::getBezier(const std::string& name) {
 
 std::unordered_map<std::string, CBezierCurve> CAnimationManager::getAllBeziers() {
     return m_mBezierCurves;
+}
+
+bool CAnimationManager::shouldTickForNext() {
+    return !m_vActiveAnimatedVariables.empty();
+}
+
+void CAnimationManager::scheduleTick() {
+    if (m_bTickScheduled)
+        return;
+
+    m_bTickScheduled = true;
+
+    const auto PMOSTHZ = g_pHyprRenderer->m_pMostHzMonitor;
+
+    if (!PMOSTHZ) {
+        wl_event_source_timer_update(m_pAnimationTick, 16);
+        return;
+    }
+
+    float       refreshDelayMs = std::floor(1000.f / PMOSTHZ->refreshRate);
+
+    const float SINCEPRES = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - PMOSTHZ->lastPresentationTimer.chrono()).count() / 1000.f;
+
+    const auto  TOPRES = std::clamp(refreshDelayMs - SINCEPRES, 1.1f, 1000.f); // we can't send 0, that will disarm it
+
+    wl_event_source_timer_update(m_pAnimationTick, std::floor(TOPRES));
 }

@@ -7,6 +7,7 @@
 #include "../Window.hpp"
 #include "OpenGL.hpp"
 #include "../helpers/Timer.hpp"
+#include "../helpers/Region.hpp"
 
 struct SMonitorRule;
 
@@ -32,16 +33,18 @@ struct SSessionLockSurface;
 
 class CHyprRenderer {
   public:
+    CHyprRenderer();
+
     void                            renderMonitor(CMonitor* pMonitor);
     void                            outputMgrApplyTest(wlr_output_configuration_v1*, bool);
     void                            arrangeLayersForMonitor(const int&);
-    void                            damageSurface(wlr_surface*, double, double);
+    void                            damageSurface(wlr_surface*, double, double, double scale = 1.0);
     void                            damageWindow(CWindow*);
     void                            damageBox(wlr_box*);
     void                            damageBox(const int& x, const int& y, const int& w, const int& h);
-    void                            damageRegion(pixman_region32_t*);
+    void                            damageRegion(const CRegion&);
     void                            damageMonitor(CMonitor*);
-    void                            damageMirrorsWith(CMonitor*, pixman_region32_t*);
+    void                            damageMirrorsWith(CMonitor*, const CRegion&);
     bool                            applyMonitorRule(CMonitor*, SMonitorRule*, bool force = false);
     bool                            shouldRenderWindow(CWindow*, CMonitor*, CWorkspace*);
     bool                            shouldRenderWindow(CWindow*);
@@ -50,6 +53,11 @@ class CHyprRenderer {
     void                            calculateUVForSurface(CWindow*, wlr_surface*, bool main = false);
     std::tuple<float, float, float> getRenderTimes(CMonitor* pMonitor); // avg max min
     void                            renderLockscreen(CMonitor* pMonitor, timespec* now);
+    void                            setOccludedForBackLayers(CRegion& region, CWorkspace* pWorkspace);
+    bool                            canSkipBackBufferClear(CMonitor* pMonitor);
+    void                            recheckSolitaryForMonitor(CMonitor* pMonitor);
+    void                            setCursorSurface(wlr_surface* surf, int hotspotX, int hotspotY);
+    void                            setCursorFromName(const std::string& name);
 
     bool                            m_bWindowRequestedCursorHide = false;
     bool                            m_bBlockSurfaceFeedback      = false;
@@ -58,23 +66,27 @@ class CHyprRenderer {
     CMonitor*                       m_pMostHzMonitor             = nullptr;
     bool                            m_bDirectScanoutBlocked      = false;
     bool                            m_bSoftwareCursorsLocked     = false;
+    bool                            m_bTearingEnvSatisfied       = false;
 
     DAMAGETRACKINGMODES
     damageTrackingModeFromStr(const std::string&);
 
-    bool             attemptDirectScanout(CMonitor*);
-    void             setWindowScanoutMode(CWindow*);
-    void             initiateManualCrash();
+    bool                                             attemptDirectScanout(CMonitor*);
+    void                                             setWindowScanoutMode(CWindow*);
+    void                                             initiateManualCrash();
 
-    bool             m_bCrashingInProgress = false;
-    float            m_fCrashingDistort    = 0.5f;
-    wl_event_source* m_pCrashingLoop       = nullptr;
+    bool                                             m_bCrashingInProgress = false;
+    float                                            m_fCrashingDistort    = 0.5f;
+    wl_event_source*                                 m_pCrashingLoop       = nullptr;
 
-    CTimer           m_tRenderTimer;
+    std::vector<std::unique_ptr<STearingController>> m_vTearingControllers;
+
+    CTimer                                           m_tRenderTimer;
 
   private:
     void arrangeLayerArray(CMonitor*, const std::vector<std::unique_ptr<SLayerSurface>>&, bool, wlr_box*);
-    void renderWorkspaceWithFullscreenWindow(CMonitor*, CWorkspace*, timespec*);
+    void renderWorkspaceWindowsFullscreen(CMonitor*, CWorkspace*, timespec*); // renders workspace windows (fullscreen) (tiled, floating, pinned, but no special)
+    void renderWorkspaceWindows(CMonitor*, CWorkspace*, timespec*);           // renders workspace windows (no fullscreen) (tiled, floating, pinned, but no special)
     void renderWindow(CWindow*, CMonitor*, timespec*, bool, eRenderPassMode, bool ignorePosition = false, bool ignoreAllGeometry = false);
     void renderLayer(SLayerSurface*, CMonitor*, timespec*);
     void renderSessionLockSurface(SSessionLockSurface*, CMonitor*, timespec*);
@@ -84,6 +96,7 @@ class CHyprRenderer {
     void renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace* pWorkspace, timespec* now, const Vector2D& translate = {0, 0}, const float& scale = 1.f);
 
     bool m_bHasARenderedCursor = true;
+    bool m_bCursorHasSurface   = false;
 
     friend class CHyprOpenGLImpl;
     friend class CToplevelExportProtocolManager;

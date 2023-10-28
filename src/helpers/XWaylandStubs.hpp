@@ -28,7 +28,8 @@ typedef struct {
 } xcb_size_hints_t;
 typedef unsigned int xcb_window_t;
 
-typedef enum xcb_stack_mode_t {
+typedef enum xcb_stack_mode_t
+{
     XCB_STACK_MODE_ABOVE     = 0,
     XCB_STACK_MODE_BELOW     = 1,
     XCB_STACK_MODE_TOP_IF    = 2,
@@ -117,7 +118,6 @@ struct wlr_xwayland_surface {
         struct wl_signal set_class;
         struct wl_signal set_role;
         struct wl_signal set_parent;
-        struct wl_signal set_pid;
         struct wl_signal set_startup_id;
         struct wl_signal set_window_type;
         struct wl_signal set_hints;

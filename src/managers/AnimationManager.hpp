@@ -13,6 +13,9 @@ class CAnimationManager {
     CAnimationManager();
 
     void                                          tick();
+    bool                                          shouldTickForNext();
+    void                                          onTicked();
+    void                                          scheduleTick();
     void                                          addBezierWithName(std::string, const Vector2D&, const Vector2D&);
     void                                          removeAllBeziers();
 
@@ -25,7 +28,8 @@ class CAnimationManager {
 
     std::unordered_map<std::string, CBezierCurve> getAllBeziers();
 
-    std::list<CAnimatedVariable*>                 m_lAnimatedVariables;
+    std::vector<CAnimatedVariable*>               m_vAnimatedVariables;
+    std::vector<CAnimatedVariable*>               m_vActiveAnimatedVariables;
 
     wl_event_source*                              m_pAnimationTick;
 
@@ -40,6 +44,8 @@ class CAnimationManager {
     bool                                          deltazero(const float& a, const float& b);
 
     std::unordered_map<std::string, CBezierCurve> m_mBezierCurves;
+
+    bool                                          m_bTickScheduled = false;
 
     // Anim stuff
     void animationPopin(CWindow*, bool close = false, float minPerc = 0.f);

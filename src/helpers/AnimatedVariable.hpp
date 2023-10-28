@@ -1,7 +1,12 @@
 #pragma once
 
-#include "../defines.hpp"
+#include <functional>
 #include <any>
+#include <chrono>
+#include "Vector2D.hpp"
+#include "Color.hpp"
+#include "../macros.hpp"
+#include "../debug/Log.hpp"
 
 enum ANIMATEDVARTYPE
 {
@@ -73,6 +78,9 @@ class CAnimatedVariable {
     }
 
     CAnimatedVariable& operator=(const Vector2D& v) {
+        if (v == m_vGoal)
+            return *this;
+
         m_vGoal        = v;
         animationBegin = std::chrono::system_clock::now();
         m_vBegun       = m_vValue;
@@ -83,6 +91,9 @@ class CAnimatedVariable {
     }
 
     CAnimatedVariable& operator=(const float& v) {
+        if (v == m_fGoal)
+            return *this;
+
         m_fGoal        = v;
         animationBegin = std::chrono::system_clock::now();
         m_fBegun       = m_fValue;
@@ -93,6 +104,9 @@ class CAnimatedVariable {
     }
 
     CAnimatedVariable& operator=(const CColor& v) {
+        if (v == m_cGoal)
+            return *this;
+
         m_cGoal        = v;
         animationBegin = std::chrono::system_clock::now();
         m_cBegun       = m_cValue;
@@ -104,6 +118,9 @@ class CAnimatedVariable {
 
     // Sets the actual stored value, without affecting the goal, but resets the timer
     void setValue(const Vector2D& v) {
+        if (v == m_vValue)
+            return;
+
         m_vValue       = v;
         animationBegin = std::chrono::system_clock::now();
         m_vBegun       = m_vValue;
@@ -113,6 +130,9 @@ class CAnimatedVariable {
 
     // Sets the actual stored value, without affecting the goal, but resets the timer
     void setValue(const float& v) {
+        if (v == m_fValue)
+            return;
+
         m_fValue       = v;
         animationBegin = std::chrono::system_clock::now();
         m_vBegun       = m_vValue;
@@ -122,6 +142,9 @@ class CAnimatedVariable {
 
     // Sets the actual stored value, without affecting the goal, but resets the timer
     void setValue(const CColor& v) {
+        if (v == m_cValue)
+            return;
+
         m_cValue       = v;
         animationBegin = std::chrono::system_clock::now();
         m_vBegun       = m_vValue;
@@ -148,17 +171,8 @@ class CAnimatedVariable {
     }
 
     // checks if an animation is in progress
-    bool isBeingAnimated() {
-        switch (m_eVarType) {
-            case AVARTYPE_FLOAT: return m_fValue != m_fGoal;
-            case AVARTYPE_VECTOR: return m_vValue != m_vGoal;
-            case AVARTYPE_COLOR: return m_cValue != m_cGoal;
-            default: UNREACHABLE();
-        }
-
-        UNREACHABLE();
-
-        return false; // just so that the warning is suppressed
+    inline bool isBeingAnimated() {
+        return m_bIsBeingAnimated;
     }
 
     void warp(bool endCallback = true) {
@@ -177,6 +191,8 @@ class CAnimatedVariable {
             }
             default: UNREACHABLE();
         }
+
+        m_bIsBeingAnimated = false;
 
         if (endCallback)
             onAnimationEnd();
@@ -251,8 +267,9 @@ class CAnimatedVariable {
 
     SAnimationPropertyConfig*             m_pConfig = nullptr;
 
-    bool                                  m_bDummy        = true;
-    bool                                  m_bIsRegistered = false;
+    bool                                  m_bDummy           = true;
+    bool                                  m_bIsRegistered    = false;
+    bool                                  m_bIsBeingAnimated = false;
 
     std::chrono::system_clock::time_point animationBegin;
 
@@ -265,8 +282,15 @@ class CAnimatedVariable {
     std::function<void(void* thisptr)>    m_fBeginCallback;
     std::function<void(void* thisptr)>    m_fUpdateCallback;
 
+    bool                                  m_bIsConnectedToActive = false;
+    void                                  connectToActive();
+    void                                  disconnectFromActive();
+
     // methods
     void onAnimationEnd() {
+        m_bIsBeingAnimated = false;
+        disconnectFromActive();
+
         if (m_fEndCallback) {
             // loading m_bRemoveEndAfterRan before calling the callback allows the callback to delete this animation safely if it is false.
             auto removeEndCallback = m_bRemoveEndAfterRan;
@@ -277,6 +301,9 @@ class CAnimatedVariable {
     }
 
     void onAnimationBegin() {
+        m_bIsBeingAnimated = true;
+        connectToActive();
+
         if (m_fBeginCallback) {
             m_fBeginCallback(this);
             if (m_bRemoveBeginAfterRan)

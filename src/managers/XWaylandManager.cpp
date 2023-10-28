@@ -1,6 +1,11 @@
 #include "XWaylandManager.hpp"
 #include "../Compositor.hpp"
 #include "../events/Events.hpp"
+#include "xdg-output-unstable-v1-protocol.h"
+
+#define OUTPUT_MANAGER_VERSION                   3
+#define OUTPUT_DONE_DEPRECATED_SINCE_VERSION     3
+#define OUTPUT_DESCRIPTION_MUTABLE_SINCE_VERSION 3
 
 CHyprXWaylandManager::CHyprXWaylandManager() {
 #ifndef NO_XWAYLAND
@@ -16,7 +21,7 @@ CHyprXWaylandManager::CHyprXWaylandManager() {
 
     setenv("DISPLAY", m_sWLRXWayland->display_name, 1);
 
-    Debug::log(LOG, "CHyprXWaylandManager started on display %s", m_sWLRXWayland->display_name);
+    Debug::log(LOG, "CHyprXWaylandManager started on display {}", m_sWLRXWayland->display_name);
 #else
     unsetenv("DISPLAY"); // unset DISPLAY so that X11 apps do not try to start on a different/invalid DISPLAY
 #endif
@@ -36,10 +41,9 @@ void CHyprXWaylandManager::activateSurface(wlr_surface* pSurface, bool activate)
         return;
 
     if (wlr_xdg_surface_try_from_wlr_surface(pSurface)) {
-        const auto PSURF = wlr_xdg_surface_try_from_wlr_surface(pSurface);
-        if (PSURF && PSURF->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+        if (const auto PSURF = wlr_xdg_surface_try_from_wlr_surface(pSurface); PSURF && PSURF->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL)
             wlr_xdg_toplevel_set_activated(PSURF->toplevel, activate);
-        }
+
     } else if (wlr_xwayland_surface_try_from_wlr_surface(pSurface)) {
         wlr_xwayland_surface_activate(wlr_xwayland_surface_try_from_wlr_surface(pSurface), activate);
 
@@ -50,6 +54,7 @@ void CHyprXWaylandManager::activateSurface(wlr_surface* pSurface, bool activate)
 
 void CHyprXWaylandManager::activateWindow(CWindow* pWindow, bool activate) {
     if (pWindow->m_bIsX11) {
+        setWindowSize(pWindow, pWindow->m_vRealSize.vec()); // update xwayland output pos
 
         if (activate) {
             wlr_xwayland_surface_set_minimized(pWindow->m_uSurface.xwayland, false);
@@ -84,9 +89,8 @@ void CHyprXWaylandManager::getGeometryForWindow(CWindow* pWindow, wlr_box* pbox)
             pbox->width  = pWindow->m_uSurface.xwayland->width;
             pbox->height = pWindow->m_uSurface.xwayland->height;
         }
-    } else {
+    } else
         wlr_xdg_surface_get_geometry(pWindow->m_uSurface.xdg, pbox);
-    }
 }
 
 std::string CHyprXWaylandManager::getTitle(CWindow* pWindow) {
@@ -123,33 +127,56 @@ std::string CHyprXWaylandManager::getAppIDClass(CWindow* pWindow) {
             if (pWindow->m_uSurface.xdg->toplevel && pWindow->m_uSurface.xdg->toplevel->app_id) {
                 return std::string(pWindow->m_uSurface.xdg->toplevel->app_id);
             }
-        } else {
+        } else
             return "";
-        }
-    } catch (std::logic_error& e) { Debug::log(ERR, "Error in getAppIDClass: %s", e.what()); }
+    } catch (std::logic_error& e) { Debug::log(ERR, "Error in getAppIDClass: {}", e.what()); }
 
     return "";
 }
 
 void CHyprXWaylandManager::sendCloseWindow(CWindow* pWindow) {
-    if (pWindow->m_bIsX11) {
+    if (pWindow->m_bIsX11)
         wlr_xwayland_surface_close(pWindow->m_uSurface.xwayland);
-    } else {
+    else
         wlr_xdg_toplevel_send_close(pWindow->m_uSurface.xdg->toplevel);
-    }
 }
 
 void CHyprXWaylandManager::setWindowSize(CWindow* pWindow, Vector2D size, bool force) {
 
-    if (!force &&
-        ((pWindow->m_vReportedSize == size && pWindow->m_vRealPosition.vec() == pWindow->m_vReportedPosition) || (pWindow->m_vReportedSize == size && !pWindow->m_bIsX11)))
+    static auto* const PXWLFORCESCALEZERO = &g_pConfigManager->getConfigValuePtr("xwayland:force_zero_scaling")->intValue;
+
+    const auto         PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
+    if (!PMONITOR)
         return;
 
-    pWindow->m_vReportedPosition = pWindow->m_vRealPosition.vec();
-    pWindow->m_vReportedSize     = size;
+    // calculate pos
+    // TODO: this should be decoupled from setWindowSize IMO
+    Vector2D windowPos = pWindow->m_vRealPosition.vec();
+
+    if (pWindow->m_bIsX11) {
+        windowPos = windowPos - PMONITOR->vecPosition; // normalize to monitor
+        if (*PXWLFORCESCALEZERO)
+            windowPos = windowPos * PMONITOR->scale;           // scale if applicable
+        windowPos = windowPos + PMONITOR->vecXWaylandPosition; // move to correct position for xwayland
+    }
+
+    if (!force && ((pWindow->m_vReportedSize == size && windowPos == pWindow->m_vReportedPosition) || (pWindow->m_vReportedSize == size && !pWindow->m_bIsX11)))
+        return;
+
+    pWindow->m_vReportedPosition    = windowPos;
+    pWindow->m_vPendingReportedSize = size;
+
+    pWindow->m_fX11SurfaceScaledBy = 1.f;
+
+    if (*PXWLFORCESCALEZERO && pWindow->m_bIsX11) {
+        if (const auto PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID); PMONITOR) {
+            size                           = size * PMONITOR->scale;
+            pWindow->m_fX11SurfaceScaledBy = PMONITOR->scale;
+        }
+    }
 
     if (pWindow->m_bIsX11)
-        wlr_xwayland_surface_configure(pWindow->m_uSurface.xwayland, pWindow->m_vRealPosition.vec().x, pWindow->m_vRealPosition.vec().y, size.x, size.y);
+        wlr_xwayland_surface_configure(pWindow->m_uSurface.xwayland, windowPos.x, windowPos.y, size.x, size.y);
     else
         wlr_xdg_toplevel_set_size(pWindow->m_uSurface.xdg->toplevel, size.x, size.y);
 }
@@ -196,7 +223,7 @@ bool CHyprXWaylandManager::shouldBeFloated(CWindow* pWindow) {
                 if (winrole.contains("pop-up") || winrole.contains("task_dialog")) {
                     return true;
                 }
-            } catch (std::exception& e) { Debug::log(ERR, "Error in shouldBeFloated, winrole threw %s", e.what()); }
+            } catch (std::exception& e) { Debug::log(ERR, "Error in shouldBeFloated, winrole threw {}", e.what()); }
         }
 
         if (pWindow->m_uSurface.xwayland->modal) {
@@ -204,9 +231,8 @@ bool CHyprXWaylandManager::shouldBeFloated(CWindow* pWindow) {
             return true;
         }
 
-        if (pWindow->m_iX11Type == 2) {
+        if (pWindow->m_iX11Type == 2)
             return true; // override_redirect
-        }
 
         const auto SIZEHINTS = pWindow->m_uSurface.xwayland->size_hints;
         if (SIZEHINTS && (pWindow->m_uSurface.xwayland->parent || ((SIZEHINTS->min_width == SIZEHINTS->max_width) && (SIZEHINTS->min_height == SIZEHINTS->max_height))))
@@ -226,9 +252,10 @@ void CHyprXWaylandManager::moveXWaylandWindow(CWindow* pWindow, const Vector2D& 
     if (!g_pCompositor->windowValidMapped(pWindow))
         return;
 
-    if (pWindow->m_bIsX11) {
-        wlr_xwayland_surface_configure(pWindow->m_uSurface.xwayland, pos.x, pos.y, pWindow->m_vRealSize.vec().x, pWindow->m_vRealSize.vec().y);
-    }
+    if (!pWindow->m_bIsX11)
+        return;
+
+    wlr_xwayland_surface_configure(pWindow->m_uSurface.xwayland, pos.x, pos.y, pWindow->m_vRealSize.vec().x, pWindow->m_vRealSize.vec().y);
 }
 
 void CHyprXWaylandManager::checkBorders(CWindow* pWindow) {
@@ -255,11 +282,10 @@ void CHyprXWaylandManager::checkBorders(CWindow* pWindow) {
 }
 
 void CHyprXWaylandManager::setWindowFullscreen(CWindow* pWindow, bool fullscreen) {
-    if (pWindow->m_bIsX11) {
+    if (pWindow->m_bIsX11)
         wlr_xwayland_surface_set_fullscreen(pWindow->m_uSurface.xwayland, fullscreen);
-    } else {
+    else
         wlr_xdg_toplevel_set_fullscreen(pWindow->m_uSurface.xdg->toplevel, fullscreen);
-    }
 
     if (pWindow->m_phForeignToplevel)
         wlr_foreign_toplevel_handle_v1_set_fullscreen(pWindow->m_phForeignToplevel, fullscreen);
@@ -282,4 +308,36 @@ Vector2D CHyprXWaylandManager::getMaxSizeForWindow(CWindow* pWindow) {
         MAXSIZE.y = 99999;
 
     return MAXSIZE;
+}
+
+Vector2D CHyprXWaylandManager::xwaylandToWaylandCoords(const Vector2D& coord) {
+
+    static auto* const PXWLFORCESCALEZERO = &g_pConfigManager->getConfigValuePtr("xwayland:force_zero_scaling")->intValue;
+
+    CMonitor*          pMonitor     = nullptr;
+    double             bestDistance = __FLT_MAX__;
+    for (auto& m : g_pCompositor->m_vMonitors) {
+        const auto SIZ = *PXWLFORCESCALEZERO ? m->vecTransformedSize : m->vecSize;
+
+        double     distance =
+            vecToRectDistanceSquared(coord, {m->vecXWaylandPosition.x, m->vecXWaylandPosition.y}, {m->vecXWaylandPosition.x + SIZ.x - 1, m->vecXWaylandPosition.y + SIZ.y - 1});
+
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            pMonitor     = m.get();
+        }
+    }
+
+    if (!pMonitor)
+        return Vector2D{};
+
+    // get local coords
+    Vector2D result = coord - pMonitor->vecXWaylandPosition;
+    // if scaled, unscale
+    if (*PXWLFORCESCALEZERO)
+        result = result / pMonitor->scale;
+    // add pos
+    result = result + pMonitor->vecPosition;
+
+    return result;
 }

@@ -27,6 +27,7 @@
 #include "render/OpenGL.hpp"
 #include "hyprerror/HyprError.hpp"
 #include "plugins/PluginSystem.hpp"
+#include "helpers/Watchdog.hpp"
 
 enum eManagersInitStage
 {
@@ -53,7 +54,7 @@ class CCompositor {
     wlr_drm_lease_v1_manager*                  m_sWRLDRMLeaseMgr;
     wlr_xdg_activation_v1*                     m_sWLRXDGActivation;
     wlr_output_layout*                         m_sWLROutputLayout;
-    wlr_idle*                                  m_sWLRIdle;
+    wlr_idle_notifier_v1*                      m_sWLRIdleNotifier;
     wlr_layer_shell_v1*                        m_sWLRLayerShell;
     wlr_xdg_shell*                             m_sWLRXDGShell;
     wlr_cursor*                                m_sWLRCursor;
@@ -61,12 +62,10 @@ class CCompositor {
     wlr_virtual_keyboard_manager_v1*           m_sWLRVKeyboardMgr;
     wlr_output_manager_v1*                     m_sWLROutputMgr;
     wlr_presentation*                          m_sWLRPresentation;
-    wlr_scene*                                 m_sWLRScene;
     wlr_input_inhibit_manager*                 m_sWLRInhibitMgr;
     wlr_keyboard_shortcuts_inhibit_manager_v1* m_sWLRKbShInhibitMgr;
     wlr_egl*                                   m_sWLREGL;
     int                                        m_iDRMFD;
-    wlr_ext_workspace_manager_v1*              m_sWLREXTWorkspaceMgr;
     wlr_pointer_constraints_v1*                m_sWLRPointerConstraints;
     wlr_relative_pointer_manager_v1*           m_sWLRRelPointerMgr;
     wlr_server_decoration_manager*             m_sWLRServerDecoMgr;
@@ -84,6 +83,9 @@ class CCompositor {
     wlr_linux_dmabuf_v1*                       m_sWLRLinuxDMABuf;
     wlr_backend*                               m_sWLRHeadlessBackend;
     wlr_session_lock_manager_v1*               m_sWLRSessionLockMgr;
+    wlr_gamma_control_manager_v1*              m_sWLRGammaCtrlMgr;
+    wlr_cursor_shape_manager_v1*               m_sWLRCursorShapeMgr;
+    wlr_tearing_control_manager_v1*            m_sWLRTearingControlMgr;
     // ------------------------------------------------- //
 
     std::string                               m_szWLDisplaySocket   = "";
@@ -99,9 +101,13 @@ class CCompositor {
     std::vector<CWindow*>                     m_vWindowsFadingOut;
     std::vector<SLayerSurface*>               m_vSurfacesFadingOut;
 
+    std::unordered_map<std::string, uint64_t> m_mMonitorIDMap;
+
     void                                      initServer();
     void                                      startCompositor();
     void                                      cleanup();
+    void                                      createLockFile();
+    void                                      removeLockFile();
 
     wlr_surface*                              m_pLastFocus   = nullptr;
     CWindow*                                  m_pLastWindow  = nullptr;
@@ -114,13 +120,15 @@ class CCompositor {
     bool                                      m_bReadyToProcess = false;
     bool                                      m_bSessionActive  = true;
     bool                                      m_bDPMSStateON    = true;
-    bool                                      m_bUnsafeState    = false; // unsafe state is when there is no monitors.
+    bool                                      m_bUnsafeState    = false;   // unsafe state is when there is no monitors.
+    wlr_output*                               m_pUnsafeOutput   = nullptr; // fallback output for the unsafe state
     bool                                      m_bIsShuttingDown = false;
 
     // ------------------------------------------------- //
 
     CMonitor*      getMonitorFromID(const int&);
     CMonitor*      getMonitorFromName(const std::string&);
+    CMonitor*      getMonitorFromDesc(const std::string&);
     CMonitor*      getMonitorFromCursor();
     CMonitor*      getMonitorFromVector(const Vector2D&);
     void           removeWindowFromVectorSafe(CWindow*);
@@ -133,6 +141,7 @@ class CCompositor {
     CWindow*       vectorToWindowTiled(const Vector2D&);
     wlr_surface*   vectorToLayerSurface(const Vector2D&, std::vector<std::unique_ptr<SLayerSurface>>*, Vector2D*, SLayerSurface**);
     wlr_surface*   vectorWindowToSurface(const Vector2D&, CWindow*, Vector2D& sl);
+    Vector2D       vectorToSurfaceLocal(const Vector2D&, CWindow*, wlr_surface*);
     CWindow*       windowFromCursor();
     CWindow*       windowFloatingFromCursor();
     CMonitor*      getMonitorFromOutput(wlr_output*);
@@ -144,20 +153,19 @@ class CCompositor {
     CWorkspace*    getWorkspaceByID(const int&);
     CWorkspace*    getWorkspaceByName(const std::string&);
     CWorkspace*    getWorkspaceByString(const std::string&);
-    CWorkspace*    getWorkspaceByWorkspaceHandle(const wlr_ext_workspace_handle_v1*);
     void           sanityCheckWorkspaces();
     void           updateWorkspaceWindowDecos(const int&);
     int            getWindowsOnWorkspace(const int&);
     CWindow*       getUrgentWindow();
     bool           hasUrgentWindowOnWorkspace(const int&);
     CWindow*       getFirstWindowOnWorkspace(const int&);
+    CWindow*       getTopLeftWindowOnWorkspace(const int&);
     CWindow*       getFullscreenWindowOnWorkspace(const int&);
     bool           doesSeatAcceptInput(wlr_surface*);
     bool           isWindowActive(CWindow*);
-    void           moveWindowToTop(CWindow*);
+    void           changeWindowZOrder(CWindow*, bool);
     void           cleanupFadingOut(const int& monid);
     CWindow*       getWindowInDirection(CWindow*, char);
-    void           deactivateAllWLRWorkspaces(wlr_ext_workspace_handle_v1* exclude = nullptr);
     CWindow*       getNextWindowOnWorkspace(CWindow*, bool focusableOnly = false);
     CWindow*       getPrevWindowOnWorkspace(CWindow*, bool focusableOnly = false);
     int            getNextAvailableNamedWorkspace();
@@ -166,7 +174,7 @@ class CCompositor {
     CMonitor*      getMonitorInDirection(const char&);
     void           updateAllWindowsAnimatedDecorationValues();
     void           updateWindowAnimatedDecorationValues(CWindow*);
-    int            getNextAvailableMonitorID();
+    int            getNextAvailableMonitorID(std::string const& name);
     void           moveWorkspaceToMonitor(CWorkspace*, CMonitor*);
     void           swapActiveWorkspaces(CMonitor*, CMonitor*);
     CMonitor*      getMonitorFromString(const std::string&);
@@ -192,6 +200,14 @@ class CCompositor {
     int            getNewSpecialID();
     void           performUserChecks();
     void           moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace);
+    CWindow*       getForceFocus();
+    void           notifyIdleActivity();
+    void           setIdleActivityInhibit(bool inhibit);
+    void           arrangeMonitors();
+    void           enterUnsafeState();
+    void           leaveUnsafeState();
+    void           setPreferredScaleForSurface(wlr_surface* pSurface, double scale);
+    void           setPreferredTransformForSurface(wlr_surface* pSurface, wl_output_transform transform);
 
     std::string    explicitConfigPath;
 

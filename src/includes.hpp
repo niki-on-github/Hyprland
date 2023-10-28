@@ -47,7 +47,6 @@ extern "C" {
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
-#include <wlr/types/wlr_idle.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
@@ -70,7 +69,7 @@ extern "C" {
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_subcompositor.h>
-#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_damage_ring.h>
 #include <wlr/types/wlr_input_inhibitor.h>
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
@@ -103,6 +102,9 @@ extern "C" {
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
+#include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/types/wlr_cursor_shape_v1.h>
+#include <wlr/types/wlr_tearing_control_v1.h>
 
 #include <libdrm/drm_fourcc.h>
 
@@ -143,5 +145,3 @@ extern "C" {
 #endif
 
 #include "helpers/Vector2D.hpp"
-
-#include "ext-workspace-unstable-v1-protocol.h"

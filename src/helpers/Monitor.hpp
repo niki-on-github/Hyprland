@@ -8,18 +8,33 @@
 #include <memory>
 #include <xf86drmMode.h>
 #include "Timer.hpp"
+#include "Region.hpp"
+#include <optional>
 
-struct SMonitorRule;
+struct SMonitorRule {
+    std::string         name        = "";
+    Vector2D            resolution  = Vector2D(1280, 720);
+    Vector2D            offset      = Vector2D(0, 0);
+    float               scale       = 1;
+    float               refreshRate = 60;
+    bool                disabled    = false;
+    wl_output_transform transform   = WL_OUTPUT_TRANSFORM_NORMAL;
+    std::string         mirrorOf    = "";
+    bool                enable10bit = false;
+    drmModeModeInfo     drmMode     = {};
+    std::optional<int>  vrr;
+};
 
 class CMonitor {
   public:
     CMonitor();
     ~CMonitor();
 
-    Vector2D        vecPosition        = Vector2D(-1, -1); // means unset
-    Vector2D        vecSize            = Vector2D(0, 0);
-    Vector2D        vecPixelSize       = Vector2D(0, 0);
-    Vector2D        vecTransformedSize = Vector2D(0, 0);
+    Vector2D        vecPosition         = Vector2D(-1, -1); // means unset
+    Vector2D        vecXWaylandPosition = Vector2D(-1, -1); // means unset
+    Vector2D        vecSize             = Vector2D(0, 0);
+    Vector2D        vecPixelSize        = Vector2D(0, 0);
+    Vector2D        vecTransformedSize  = Vector2D(0, 0);
 
     bool            primary = false;
 
@@ -43,6 +58,8 @@ class CMonitor {
     bool                noFrameSchedule = false;
     bool                scheduledRecalc = false;
     wl_output_transform transform       = WL_OUTPUT_TRANSFORM_NORMAL;
+    bool                gammaChanged    = false;
+    float               xwaylandScale   = 1.f;
 
     bool                dpmsStatus    = true;
     bool                vrrActive     = false; // this can be TRUE even if VRR is not active in the case that this display does not support it.
@@ -56,9 +73,25 @@ class CMonitor {
     bool                RATScheduled = false;
     CTimer              lastPresentationTimer;
 
+    SMonitorRule        activeMonitorRule;
+
     // mirroring
     CMonitor*              pMirrorOf = nullptr;
     std::vector<CMonitor*> mirrors;
+
+    CRegion                lastFrameDamage; // stores last frame damage
+
+    // for tearing
+    CWindow* solitaryClient = nullptr;
+
+    struct {
+        bool canTear         = false;
+        bool nextRenderTorn  = false;
+        bool activelyTearing = false;
+
+        bool busy                    = false;
+        bool frameScheduledWhileBusy = false;
+    } tearingState;
 
     // for the special workspace. 0 means not open.
     int                                                        specialWorkspaceID = 0;
@@ -71,23 +104,23 @@ class CMonitor {
     DYNLISTENER(monitorDamage);
     DYNLISTENER(monitorNeedsFrame);
     DYNLISTENER(monitorCommit);
-
-    // hack: a group = workspaces on a monitor.
-    // I don't really care lol :P
-    wlr_ext_workspace_group_handle_v1* pWLRWorkspaceGroupHandle = nullptr;
+    DYNLISTENER(monitorBind);
 
     // methods
     void                       onConnect(bool noRule);
     void                       onDisconnect();
     void                       addDamage(const pixman_region32_t* rg);
+    void                       addDamage(const CRegion* rg);
     void                       addDamage(const wlr_box* box);
     void                       setMirror(const std::string&);
     bool                       isMirror();
     float                      getDefaultScale();
-    void                       changeWorkspace(CWorkspace* const pWorkspace, bool internal = false);
+    void                       changeWorkspace(CWorkspace* const pWorkspace, bool internal = false, bool noMouseMove = false);
     void                       changeWorkspace(const int& id, bool internal = false);
     void                       setSpecialWorkspace(CWorkspace* const pWorkspace);
     void                       setSpecialWorkspace(const int& id);
+    void                       moveTo(const Vector2D& pos);
+    Vector2D                   middle();
 
     std::shared_ptr<CMonitor>* m_pThisWrap            = nullptr;
     bool                       m_bEnabled             = false;

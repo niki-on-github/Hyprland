@@ -1,11 +1,12 @@
 #pragma once
 
-#include "../defines.hpp"
 #include "AnimatedVariable.hpp"
+#include <string>
+#include "../defines.hpp"
 
-enum eFullscreenMode : uint8_t
-{
-    FULLSCREEN_FULL = 0,
+enum eFullscreenMode : int8_t {
+    FULLSCREEN_INVALID = -1,
+    FULLSCREEN_FULL    = 0,
     FULLSCREEN_MAXIMIZED
 };
 
@@ -28,12 +29,10 @@ class CWorkspace {
         std::string name = "";
     } m_sPrevWorkspace;
 
-    bool                         m_bHasFullscreenWindow = false;
-    eFullscreenMode              m_efFullscreenMode     = FULLSCREEN_FULL;
+    bool            m_bHasFullscreenWindow = false;
+    eFullscreenMode m_efFullscreenMode     = FULLSCREEN_FULL;
 
-    wlr_ext_workspace_handle_v1* m_pWlrHandle = nullptr;
-
-    wl_array                     m_wlrCoordinateArr;
+    wl_array        m_wlrCoordinateArr;
 
     // for animations
     CAnimatedVariable m_vRenderOffset;
@@ -50,11 +49,11 @@ class CWorkspace {
     bool m_bDefaultFloating = false;
     bool m_bDefaultPseudo   = false;
 
-    // don't destroy in sanity check
-    bool m_bIndestructible = false;
-
     // last monitor (used on reconnect)
     std::string m_szLastMonitor = "";
+
+    // Whether the user configured command for on-created-empty has been executed, if any
+    bool        m_bOnCreatedEmptyExecuted = false;
 
     void        startAnim(bool in, bool left, bool instant = false);
     void        setActive(bool on);

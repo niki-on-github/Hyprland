@@ -2,7 +2,7 @@
 
 #include "../../Compositor.hpp"
 
-CHyprDropShadowDecoration::CHyprDropShadowDecoration(CWindow* pWindow) {
+CHyprDropShadowDecoration::CHyprDropShadowDecoration(CWindow* pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
 }
 
@@ -35,7 +35,6 @@ void CHyprDropShadowDecoration::damageEntire() {
 }
 
 void CHyprDropShadowDecoration::updateWindow(CWindow* pWindow) {
-    damageEntire();
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
 
@@ -58,6 +57,9 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
         return; // don't draw invisible shadows
 
     if (!m_pWindow->m_sSpecialRenderData.decorate)
+        return;
+
+    if (!m_pWindow->m_sSpecialRenderData.shadow)
         return;
 
     if (m_pWindow->m_sAdditionalConfigData.forceNoShadow)

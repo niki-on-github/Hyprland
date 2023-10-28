@@ -3,7 +3,7 @@
 #include "../../Compositor.hpp"
 
 CInputMethodRelay::CInputMethodRelay() {
-    g_pHookSystem->hookDynamic("keyboardFocus", [&](void* self, std::any param) { onKeyboardFocus(std::any_cast<wlr_surface*>(param)); });
+    g_pHookSystem->hookDynamic("keyboardFocus", [&](void* self, SCallbackInfo& info, std::any param) { onKeyboardFocus(std::any_cast<wlr_surface*>(param)); });
 }
 
 void CInputMethodRelay::onNewIME(wlr_input_method_v2* pIME) {
@@ -46,12 +46,12 @@ void CInputMethodRelay::onNewIME(wlr_input_method_v2* pIME) {
             } else {
                 if (PIMR->m_pWLRIME->current.preedit.text) {
                     zwp_text_input_v1_send_preedit_cursor(PTI->pV1Input->resourceImpl, PIMR->m_pWLRIME->current.preedit.cursor_begin);
-                    zwp_text_input_v1_send_preedit_styling(PTI->pV1Input->resourceImpl, 0, std::string(PIMR->m_pWLRIME->current.preedit.text).length() - 1,
-                                                           ZWP_TEXT_INPUT_V1_PREEDIT_STYLE_NONE);
+                    zwp_text_input_v1_send_preedit_styling(PTI->pV1Input->resourceImpl, 0, std::string(PIMR->m_pWLRIME->current.preedit.text).length(),
+                                                           ZWP_TEXT_INPUT_V1_PREEDIT_STYLE_HIGHLIGHT);
                     zwp_text_input_v1_send_preedit_string(PTI->pV1Input->resourceImpl, PTI->pV1Input->serial, PIMR->m_pWLRIME->current.preedit.text, "");
                 } else {
                     zwp_text_input_v1_send_preedit_cursor(PTI->pV1Input->resourceImpl, PIMR->m_pWLRIME->current.preedit.cursor_begin);
-                    zwp_text_input_v1_send_preedit_styling(PTI->pV1Input->resourceImpl, 0, 0, ZWP_TEXT_INPUT_V1_PREEDIT_STYLE_NONE);
+                    zwp_text_input_v1_send_preedit_styling(PTI->pV1Input->resourceImpl, 0, 0, ZWP_TEXT_INPUT_V1_PREEDIT_STYLE_HIGHLIGHT);
                     zwp_text_input_v1_send_preedit_string(PTI->pV1Input->resourceImpl, PTI->pV1Input->serial, "", "");
                 }
 

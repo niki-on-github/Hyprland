@@ -13,17 +13,27 @@ struct SLayoutMessageHeader {
     CWindow* pWindow = nullptr;
 };
 
-enum eFullscreenMode : uint8_t;
+enum eFullscreenMode : int8_t;
 
 enum eRectCorner
 {
-    CORNER_TOPLEFT = 0,
+    CORNER_NONE = 0,
+    CORNER_TOPLEFT,
     CORNER_TOPRIGHT,
     CORNER_BOTTOMRIGHT,
     CORNER_BOTTOMLEFT
 };
 
-interface IHyprLayout {
+enum eDirection
+{
+    DIRECTION_DEFAULT = -1,
+    DIRECTION_UP      = 0,
+    DIRECTION_RIGHT,
+    DIRECTION_DOWN,
+    DIRECTION_LEFT
+};
+
+class IHyprLayout {
   public:
     virtual ~IHyprLayout()   = 0;
     virtual void onEnable()  = 0;
@@ -34,8 +44,8 @@ interface IHyprLayout {
         The layout HAS TO set the goal pos and size (anim mgr will use it)
         If !animationinprogress, then the anim mgr will not apply an anim.
     */
-    virtual void onWindowCreated(CWindow*);
-    virtual void onWindowCreatedTiling(CWindow*) = 0;
+    virtual void onWindowCreated(CWindow*, eDirection direction = DIRECTION_DEFAULT);
+    virtual void onWindowCreatedTiling(CWindow*, eDirection direction = DIRECTION_DEFAULT) = 0;
     virtual void onWindowCreatedFloating(CWindow*);
 
     /*
@@ -76,7 +86,7 @@ interface IHyprLayout {
         Vector2D holds pixel values
         Optional pWindow for a specific window
     */
-    virtual void resizeActiveWindow(const Vector2D&, CWindow* pWindow = nullptr) = 0;
+    virtual void resizeActiveWindow(const Vector2D&, eRectCorner corner = CORNER_NONE, CWindow* pWindow = nullptr) = 0;
     /*
         Called when a user requests a move of the current window by a vec
         Vector2D holds pixel values
@@ -123,6 +133,12 @@ interface IHyprLayout {
     virtual void switchWindows(CWindow*, CWindow*) = 0;
 
     /*
+        Called when the user requests a window move in a direction.
+        The layout is free to ignore.
+    */
+    virtual void moveWindowTo(CWindow*, const std::string& direction) = 0;
+
+    /*
         Called when the user requests to change the splitratio by or to X
         on a window
     */
@@ -146,7 +162,26 @@ interface IHyprLayout {
     /*
         Called for replacing any data a layout has for a new window
     */
-    virtual void replaceWindowDataWith(CWindow * from, CWindow * to) = 0;
+    virtual void replaceWindowDataWith(CWindow* from, CWindow* to) = 0;
+
+    /*
+        Determines if a window can be focused. If hidden this usually means the window is part of a group.
+    */
+    virtual bool isWindowReachable(CWindow*);
+
+    /*
+        Called before an attempt is made to focus a window.
+        Brings the window to the top of any groups and ensures it is not hidden.
+        If the window is unmapped following this call, the focus attempt will fail.
+    */
+    virtual void bringWindowToTop(CWindow*);
+
+    /*
+        Called via the foreign toplevel activation protocol.
+        Focuses a window, bringing it to the top of its group if applicable.
+        May be ignored.
+    */
+    virtual void requestFocusForWindow(CWindow*);
 
   private:
     Vector2D    m_vBeginDragXY;

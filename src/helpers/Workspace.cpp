@@ -13,18 +13,6 @@ CWorkspace::CWorkspace(int monitorID, std::string name, bool special) {
     m_szName              = name;
     m_bIsSpecialWorkspace = special;
 
-    if (!special) {
-        m_pWlrHandle = wlr_ext_workspace_handle_v1_create(PMONITOR->pWLRWorkspaceGroupHandle);
-
-        // set geometry here cuz we can
-        wl_array_init(&m_wlrCoordinateArr);
-        *reinterpret_cast<int*>(wl_array_add(&m_wlrCoordinateArr, sizeof(int))) = (int)PMONITOR->vecPosition.x;
-        *reinterpret_cast<int*>(wl_array_add(&m_wlrCoordinateArr, sizeof(int))) = (int)PMONITOR->vecPosition.y;
-        wlr_ext_workspace_handle_v1_set_coordinates(m_pWlrHandle, &m_wlrCoordinateArr);
-        wlr_ext_workspace_handle_v1_set_hidden(m_pWlrHandle, false);
-        wlr_ext_workspace_handle_v1_set_urgent(m_pWlrHandle, false);
-    }
-
     m_vRenderOffset.m_pWorkspace = this;
     m_vRenderOffset.create(AVARTYPE_VECTOR, special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"),
                            nullptr, AVARDAMAGE_ENTIRE);
@@ -36,29 +24,60 @@ CWorkspace::CWorkspace(int monitorID, std::string name, bool special) {
     m_vRenderOffset.registerVar();
     m_fAlpha.registerVar();
 
-    g_pEventManager->postEvent({"createworkspace", m_szName}, true);
+    g_pEventManager->postEvent({"createworkspace", m_szName});
     EMIT_HOOK_EVENT("createWorkspace", this);
 }
 
 CWorkspace::~CWorkspace() {
     m_vRenderOffset.unregister();
 
-    Debug::log(LOG, "Destroying workspace ID %d", m_iID);
+    Debug::log(LOG, "Destroying workspace ID {}", m_iID);
 
-    if (m_pWlrHandle) {
-        wlr_ext_workspace_handle_v1_set_active(m_pWlrHandle, false);
-        wlr_ext_workspace_handle_v1_destroy(m_pWlrHandle);
-        m_pWlrHandle = nullptr;
-    }
-
-    g_pEventManager->postEvent({"destroyworkspace", m_szName}, true);
+    g_pEventManager->postEvent({"destroyworkspace", m_szName});
     EMIT_HOOK_EVENT("destroyWorkspace", this);
 }
 
 void CWorkspace::startAnim(bool in, bool left, bool instant) {
     const auto ANIMSTYLE = m_fAlpha.m_pConfig->pValues->internalStyle;
 
-    if (ANIMSTYLE == "fade") {
+    if (ANIMSTYLE.starts_with("slidefade")) {
+        const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
+        float      movePerc = 100.f;
+
+        if (ANIMSTYLE.find("%") != std::string::npos) {
+            try {
+                auto percstr = ANIMSTYLE.substr(ANIMSTYLE.find_last_of(' ') + 1);
+                movePerc     = std::stoi(percstr.substr(0, percstr.length() - 1));
+            } catch (std::exception& e) { Debug::log(ERR, "Error in startAnim: invalid percentage"); }
+        }
+
+        m_fAlpha.setValueAndWarp(1.f);
+        m_vRenderOffset.setValueAndWarp(Vector2D(0, 0));
+
+        if (ANIMSTYLE.starts_with("slidefadevert")) {
+            if (in) {
+                m_fAlpha.setValueAndWarp(0.f);
+                m_vRenderOffset.setValueAndWarp(Vector2D(0, (left ? PMONITOR->vecSize.y : -PMONITOR->vecSize.y) * (movePerc / 100.f)));
+                m_fAlpha        = 1.f;
+                m_vRenderOffset = Vector2D(0, 0);
+            } else {
+                m_fAlpha.setValueAndWarp(1.f);
+                m_fAlpha        = 0.f;
+                m_vRenderOffset = Vector2D(0, (left ? -PMONITOR->vecSize.y : PMONITOR->vecSize.y) * (movePerc / 100.f));
+            }
+        } else {
+            if (in) {
+                m_fAlpha.setValueAndWarp(0.f);
+                m_vRenderOffset.setValueAndWarp(Vector2D((left ? PMONITOR->vecSize.x : -PMONITOR->vecSize.x) * (movePerc / 100.f), 0));
+                m_fAlpha        = 1.f;
+                m_vRenderOffset = Vector2D(0, 0);
+            } else {
+                m_fAlpha.setValueAndWarp(1.f);
+                m_fAlpha        = 0.f;
+                m_vRenderOffset = Vector2D((left ? -PMONITOR->vecSize.x : PMONITOR->vecSize.x) * (movePerc / 100.f), 0);
+            }
+        }
+    } else if (ANIMSTYLE == "fade") {
         m_vRenderOffset.setValueAndWarp(Vector2D(0, 0)); // fix a bug, if switching from slide -> fade.
 
         if (in) {
@@ -94,6 +113,17 @@ void CWorkspace::startAnim(bool in, bool left, bool instant) {
         }
     }
 
+    if (m_bIsSpecialWorkspace) {
+        // required for open/close animations
+        if (in) {
+            m_fAlpha.setValueAndWarp(0.f);
+            m_fAlpha = 1.f;
+        } else {
+            m_fAlpha.setValueAndWarp(1.f);
+            m_fAlpha = 0.f;
+        }
+    }
+
     if (instant) {
         m_vRenderOffset.warp();
         m_fAlpha.warp();
@@ -101,31 +131,11 @@ void CWorkspace::startAnim(bool in, bool left, bool instant) {
 }
 
 void CWorkspace::setActive(bool on) {
-    if (m_pWlrHandle) {
-        wlr_ext_workspace_handle_v1_set_active(m_pWlrHandle, on);
-    }
+    ; // empty until https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/40
 }
 
 void CWorkspace::moveToMonitor(const int& id) {
-    const auto PMONITOR = g_pCompositor->getMonitorFromID(id);
-
-    if (!PMONITOR || m_bIsSpecialWorkspace)
-        return;
-
-    wlr_ext_workspace_handle_v1_set_active(m_pWlrHandle, false);
-    wlr_ext_workspace_handle_v1_destroy(m_pWlrHandle);
-
-    m_pWlrHandle = wlr_ext_workspace_handle_v1_create(PMONITOR->pWLRWorkspaceGroupHandle);
-
-    // set geometry here cuz we can
-    wl_array_init(&m_wlrCoordinateArr);
-    *reinterpret_cast<int*>(wl_array_add(&m_wlrCoordinateArr, sizeof(int))) = (int)PMONITOR->vecPosition.x;
-    *reinterpret_cast<int*>(wl_array_add(&m_wlrCoordinateArr, sizeof(int))) = (int)PMONITOR->vecPosition.y;
-    wlr_ext_workspace_handle_v1_set_coordinates(m_pWlrHandle, &m_wlrCoordinateArr);
-    wlr_ext_workspace_handle_v1_set_hidden(m_pWlrHandle, false);
-    wlr_ext_workspace_handle_v1_set_urgent(m_pWlrHandle, false);
-
-    wlr_ext_workspace_handle_v1_set_name(m_pWlrHandle, m_szName.c_str());
+    ; // empty until https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/40
 }
 
 CWindow* CWorkspace::getLastFocusedWindow() {
@@ -142,7 +152,7 @@ void CWorkspace::rememberPrevWorkspace(const CWorkspace* prev) {
         return;
     }
 
-    if (prev->m_sPrevWorkspace.iID == m_sPrevWorkspace.iID) {
+    if (prev->m_iID == m_iID) {
         Debug::log(LOG, "Tried to set prev workspace to the same as current one");
         return;
     }

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../defines.hpp"
-#include "../Window.hpp"
+#include <optional>
+
+class CWindow; // because clangd
 
 class CHyprXWaylandManager {
   public:
@@ -25,6 +27,7 @@ class CHyprXWaylandManager {
     void          moveXWaylandWindow(CWindow*, const Vector2D&);
     void          checkBorders(CWindow*);
     Vector2D      getMaxSizeForWindow(CWindow*);
+    Vector2D      xwaylandToWaylandCoords(const Vector2D&);
 };
 
 inline std::unique_ptr<CHyprXWaylandManager> g_pXWaylandManager;

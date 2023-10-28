@@ -26,7 +26,7 @@ void CHookSystemManager::unhook(HOOK_CALLBACK_FN* fn) {
     }
 }
 
-void CHookSystemManager::emit(const std::vector<SCallbackFNPtr>* callbacks, std::any data) {
+void CHookSystemManager::emit(const std::vector<SCallbackFNPtr>* callbacks, SCallbackInfo& info, std::any data) {
     if (callbacks->empty())
         return;
 
@@ -38,7 +38,7 @@ void CHookSystemManager::emit(const std::vector<SCallbackFNPtr>* callbacks, std:
 
         if (!cb.handle) {
             // we don't guard hl hooks
-            (*cb.fn)(cb.fn, data);
+            (*cb.fn)(cb.fn, info, data);
             continue;
         }
 
@@ -49,7 +49,7 @@ void CHookSystemManager::emit(const std::vector<SCallbackFNPtr>* callbacks, std:
 
         try {
             if (!setjmp(m_jbHookFaultJumpBuf))
-                (*cb.fn)(cb.fn, data);
+                (*cb.fn)(cb.fn, info, data);
             else {
                 // this module crashed.
                 throw std::exception();
@@ -57,7 +57,7 @@ void CHookSystemManager::emit(const std::vector<SCallbackFNPtr>* callbacks, std:
         } catch (std::exception& e) {
             // TODO: this works only once...?
             faultyHandles.push_back(cb.handle);
-            Debug::log(ERR, " [hookSystem] Hook from plugin %lx caused a SIGSEGV, queueing for unloading.", cb.handle);
+            Debug::log(ERR, "[hookSystem] Hook from plugin {:x} caused a SIGSEGV, queueing for unloading.", (uintptr_t)cb.handle);
         }
     }
 
@@ -73,7 +73,7 @@ std::vector<SCallbackFNPtr>* CHookSystemManager::getVecForEvent(const std::strin
     if (IT != m_lpRegisteredHooks.end())
         return &IT->second;
 
-    Debug::log(LOG, " [hookSystem] New hook event registered: %s", event.c_str());
+    Debug::log(LOG, "[hookSystem] New hook event registered: {}", event);
 
     return &m_lpRegisteredHooks.emplace_back(std::make_pair<>(event, std::vector<SCallbackFNPtr>{})).second;
 }

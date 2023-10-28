@@ -1,9 +1,9 @@
 #pragma once
 
 #include "../../defines.hpp"
+#include "../../helpers/Region.hpp"
 
-enum eDecorationType
-{
+enum eDecorationType {
     DECORATION_NONE = -1,
     DECORATION_GROUPBAR,
     DECORATION_SHADOW,
@@ -18,8 +18,9 @@ struct SWindowDecorationExtents {
 class CWindow;
 class CMonitor;
 
-interface IHyprWindowDecoration {
+class IHyprWindowDecoration {
   public:
+    IHyprWindowDecoration(CWindow*);
     virtual ~IHyprWindowDecoration() = 0;
 
     virtual SWindowDecorationExtents getWindowDecorationExtents() = 0;
@@ -34,5 +35,10 @@ interface IHyprWindowDecoration {
 
     virtual SWindowDecorationExtents getWindowDecorationReservedArea();
 
+    virtual CRegion                  getWindowDecorationRegion();
+
     virtual bool                     allowsInput();
+
+  private:
+    CWindow* m_pWindow = nullptr;
 };

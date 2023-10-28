@@ -1,9 +1,10 @@
-globber = run_command('find', '.', '-name', '*.cpp', check: true)
+globber = run_command('sh', '-c', 'find . -name "*.cpp" | sort', check: true)
 src = globber.stdout().strip().split('\n')
 
 executable('Hyprland', src,
   cpp_args: ['-DWLR_USE_UNSTABLE'],
   link_args: '-rdynamic',
+  cpp_pch: 'pch/pch.hpp',
   dependencies: [
     server_protos,
     dependency('wayland-server'),

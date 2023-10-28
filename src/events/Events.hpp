@@ -39,6 +39,7 @@ namespace Events {
     DYNLISTENFUNC(destroyPopupXDG);
     DYNLISTENFUNC(commitPopupXDG);
     DYNLISTENFUNC(newPopupFromPopupXDG);
+    DYNLISTENFUNC(repositionPopupXDG);
 
     // Surface XDG (window)
     LISTENER(newXDGSurface);
@@ -103,6 +104,7 @@ namespace Events {
     DYNLISTENFUNC(monitorDamage);
     DYNLISTENFUNC(monitorNeedsFrame);
     DYNLISTENFUNC(monitorCommit);
+    DYNLISTENFUNC(monitorBind);
 
     // XWayland
     LISTENER(readyXWayland);
@@ -166,4 +168,13 @@ namespace Events {
 
     // Session Lock
     LISTENER(newSessionLock);
+
+    // Gamma control
+    LISTENER(setGamma);
+
+    // Cursor shape
+    LISTENER(setCursorShape);
+
+    // Tearing hints
+    LISTENER(newTearingHint);
 };

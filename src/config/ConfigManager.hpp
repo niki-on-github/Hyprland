@@ -14,11 +14,11 @@
 #include <xf86drmMode.h>
 #include "../Window.hpp"
 #include "../helpers/WLClasses.hpp"
+#include "../helpers/Monitor.hpp"
+#include "../helpers/VarList.hpp"
 
 #include "defaultConfig.hpp"
 #include "ConfigDataValues.hpp"
-
-#define STRVAL_EMPTY "[[EMPTY]]"
 
 #define INITANIMCFG(name)           animationConfig[name] = {}
 #define CREATEANIMCFG(name, parent) animationConfig[name] = {false, "", "", 0.f, -1, &animationConfig["global"], &animationConfig[parent]}
@@ -35,31 +35,21 @@ struct SConfigValue {
     bool                                    set = false; // used for device configs
 };
 
-struct SMonitorRule {
-    std::string         name        = "";
-    Vector2D            resolution  = Vector2D(1280, 720);
-    Vector2D            offset      = Vector2D(0, 0);
-    float               scale       = 1;
-    float               refreshRate = 60;
-    bool                disabled    = false;
-    wl_output_transform transform   = WL_OUTPUT_TRANSFORM_NORMAL;
-    std::string         mirrorOf    = "";
-    bool                enable10bit = false;
-    drmModeModeInfo     drmMode     = {};
-};
-
 struct SWorkspaceRule {
-    std::string            monitor         = "";
-    std::string            workspaceString = "";
-    std::string            workspaceName   = "";
-    int                    workspaceId     = -1;
-    bool                   isDefault       = false;
-    std::optional<int64_t> gapsIn;
-    std::optional<int64_t> gapsOut;
-    std::optional<int64_t> borderSize;
-    std::optional<int>     border;
-    std::optional<int>     rounding;
-    std::optional<int>     decorate;
+    std::string                monitor         = "";
+    std::string                workspaceString = "";
+    std::string                workspaceName   = "";
+    int                        workspaceId     = -1;
+    bool                       isDefault       = false;
+    bool                       isPersistent    = false;
+    std::optional<int64_t>     gapsIn;
+    std::optional<int64_t>     gapsOut;
+    std::optional<int64_t>     borderSize;
+    std::optional<int>         border;
+    std::optional<int>         rounding;
+    std::optional<int>         decorate;
+    std::optional<int>         shadow;
+    std::optional<std::string> onCreatedEmptyRunCmd;
 };
 
 struct SMonitorAdditionalReservedArea {
@@ -86,73 +76,6 @@ struct SExecRequestedRule {
     uint64_t    iPid   = 0;
 };
 
-class CVarList {
-  public:
-    /* passing 's' as a separator will use std::isspace */
-    CVarList(const std::string& in, long unsigned int lastArgNo = 0, const char separator = ',') {
-        std::string curitem  = "";
-        std::string argZ     = in;
-        const bool  SPACESEP = separator == 's';
-
-        auto        nextItem = [&]() {
-            auto idx = lastArgNo != 0 && m_vArgs.size() >= lastArgNo - 1 ? std::string::npos : ([&]() -> size_t {
-                if (!SPACESEP)
-                    return argZ.find_first_of(separator);
-
-                uint64_t pos = -1;
-                while (!std::isspace(argZ[++pos]) && pos < argZ.length())
-                    ;
-
-                return pos < argZ.length() ? pos : std::string::npos;
-            }());
-
-            if (idx != std::string::npos) {
-                curitem = argZ.substr(0, idx);
-                argZ    = argZ.substr(idx + 1);
-            } else {
-                curitem = argZ;
-                argZ    = STRVAL_EMPTY;
-            }
-        };
-
-        nextItem();
-
-        while (curitem != STRVAL_EMPTY) {
-            m_vArgs.push_back(removeBeginEndSpacesTabs(curitem));
-            nextItem();
-        }
-    };
-
-    ~CVarList() = default;
-
-    size_t size() const {
-        return m_vArgs.size();
-    }
-
-    std::string operator[](const long unsigned int& idx) const {
-        if (idx >= m_vArgs.size())
-            return "";
-        return m_vArgs[idx];
-    }
-
-    // for range-based loops
-    std::vector<std::string>::iterator begin() {
-        return m_vArgs.begin();
-    }
-    std::vector<std::string>::const_iterator begin() const {
-        return m_vArgs.begin();
-    }
-    std::vector<std::string>::iterator end() {
-        return m_vArgs.end();
-    }
-    std::vector<std::string>::const_iterator end() const {
-        return m_vArgs.end();
-    }
-
-  private:
-    std::vector<std::string> m_vArgs;
-};
-
 class CConfigManager {
   public:
     CConfigManager();
@@ -162,19 +85,24 @@ class CConfigManager {
 
     int                                                             getInt(const std::string&);
     float                                                           getFloat(const std::string&);
+    Vector2D                                                        getVec(const std::string&);
     std::string                                                     getString(const std::string&);
     void                                                            setFloat(const std::string&, float);
     void                                                            setInt(const std::string&, int);
+    void                                                            setVec(const std::string&, Vector2D);
     void                                                            setString(const std::string&, const std::string&);
 
-    int                                                             getDeviceInt(const std::string&, const std::string&);
-    float                                                           getDeviceFloat(const std::string&, const std::string&);
-    std::string                                                     getDeviceString(const std::string&, const std::string&);
+    int                                                             getDeviceInt(const std::string&, const std::string&, const std::string& fallback = "");
+    float                                                           getDeviceFloat(const std::string&, const std::string&, const std::string& fallback = "");
+    Vector2D                                                        getDeviceVec(const std::string&, const std::string&, const std::string& fallback = "");
+    std::string                                                     getDeviceString(const std::string&, const std::string&, const std::string& fallback = "");
     bool                                                            deviceConfigExists(const std::string&);
     bool                                                            shouldBlurLS(const std::string&);
 
     SConfigValue*                                                   getConfigValuePtr(const std::string&);
     SConfigValue*                                                   getConfigValuePtrSafe(const std::string&);
+    static std::string                                              getConfigDir();
+    static std::string                                              getMainConfigPath();
 
     SMonitorRule                                                    getMonitorRuleFor(const std::string&, const std::string& displayName = "");
     SWorkspaceRule                                                  getWorkspaceRuleFor(CWorkspace*);
@@ -250,6 +178,8 @@ class CConfigManager {
 
     std::vector<std::pair<std::string, std::string>>                                           environmentVariables;
 
+    std::vector<std::pair<std::string, std::string>>                                           m_vFailedPluginConfigValues; // for plugin values of unloaded plugins
+
     // internal methods
     void         setDefaultVars();
     void         setDefaultAnimationVars();
@@ -262,7 +192,7 @@ class CConfigManager {
     void         applyUserDefinedVars(std::string&, const size_t);
     void         loadConfigLoadVars();
     SConfigValue getConfigValueSafe(const std::string&);
-    SConfigValue getConfigValueSafeDevice(const std::string&, const std::string&);
+    SConfigValue getConfigValueSafeDevice(const std::string&, const std::string&, const std::string& fallback = "");
     void         parseLine(std::string&);
     void         configSetValueSafe(const std::string&, const std::string&);
     void         handleDeviceConfig(const std::string&, const std::string&);

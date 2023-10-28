@@ -11,10 +11,6 @@
 #include <string>
 #include <filesystem>
 
-#ifdef USES_SYSTEMD
-#include <systemd/sd-daemon.h> // for sd_notify
-#endif
-
 void help() {
     std::cout << "usage: Hyprland [arg [...]].\n";
     std::cout << "\nArguments:\n";
@@ -26,7 +22,7 @@ void help() {
 int main(int argc, char** argv) {
 
     if (!getenv("XDG_RUNTIME_DIR"))
-        throw std::runtime_error("XDG_RUNTIME_DIR is not set!");
+        throwError("XDG_RUNTIME_DIR is not set!");
 
     // export HYPRLAND_CMD
     std::string cmd = "";
@@ -53,6 +49,7 @@ int main(int argc, char** argv) {
         } else if (it->compare("-c") == 0 || it->compare("--config") == 0) {
             if (std::next(it) == args.end()) {
                 help();
+
                 return 1;
             }
             std::string next_arg = std::next(it)->c_str();
@@ -65,14 +62,20 @@ int main(int argc, char** argv) {
             }
 
             configPath = next_arg;
-            Debug::log(LOG, "User-specified config location: '%s'", configPath.c_str());
+            Debug::log(LOG, "User-specified config location: '{}'", configPath);
 
             it++;
 
             continue;
-        } else {
+        } else if (it->compare("-h") == 0 || it->compare("--help") == 0) {
             help();
+
             return 0;
+        } else {
+            std::cerr << "[ ERROR ] Unknown option '" << it->c_str() << "'!\n";
+            help();
+
+            return 1;
         }
     }
 
@@ -94,6 +97,8 @@ int main(int argc, char** argv) {
 
     g_pCompositor->initServer();
 
+    Init::gainRealTime();
+
     Debug::log(LOG, "Hyprland init finished.");
 
     // If all's good to go, start.
@@ -101,18 +106,7 @@ int main(int argc, char** argv) {
 
     // If we are here it means we got yote.
     Debug::log(LOG, "Hyprland reached the end.");
-
-#ifdef USES_SYSTEMD
-    // tell systemd it destroy bound/related units
-    if (sd_booted() > 0)
-        sd_notify(0, "STOPPING=1");
-#endif
-
-    if (g_pCompositor->m_sWLDisplay)
-        wl_display_destroy_clients(g_pCompositor->m_sWLDisplay);
-
-    if (g_pCompositor->m_sWLDisplay)
-        wl_display_destroy(g_pCompositor->m_sWLDisplay);
+    g_pCompositor.reset();
 
     return EXIT_SUCCESS;
 }

@@ -1,21 +1,15 @@
 #pragma once
 
 #include "IHyprLayout.hpp"
+
 #include <list>
 #include <deque>
-#include "../render/decorations/CHyprGroupBarDecoration.hpp"
 #include <array>
+#include <optional>
+#include <format>
 
 class CHyprDwindleLayout;
-enum eFullscreenMode : uint8_t;
-
-enum OneTimeFocus {
-    UP = 0,
-    RIGHT,
-    DOWN,
-    LEFT,
-    NOFOCUS,
-};
+enum eFullscreenMode : int8_t;
 
 struct SDwindleNodeData {
     SDwindleNodeData*                pParent = nullptr;
@@ -49,17 +43,18 @@ struct SDwindleNodeData {
 
 class CHyprDwindleLayout : public IHyprLayout {
   public:
-    virtual void                     onWindowCreatedTiling(CWindow*);
+    virtual void                     onWindowCreatedTiling(CWindow*, eDirection direction = DIRECTION_DEFAULT);
     virtual void                     onWindowRemovedTiling(CWindow*);
     virtual bool                     isWindowTiled(CWindow*);
     virtual void                     recalculateMonitor(const int&);
     virtual void                     recalculateWindow(CWindow*);
     virtual void                     onBeginDragWindow();
-    virtual void                     resizeActiveWindow(const Vector2D&, CWindow* pWindow = nullptr);
+    virtual void                     resizeActiveWindow(const Vector2D&, eRectCorner corner = CORNER_NONE, CWindow* pWindow = nullptr);
     virtual void                     fullscreenRequestForWindow(CWindow*, eFullscreenMode, bool);
     virtual std::any                 layoutMessage(SLayoutMessageHeader, std::string);
     virtual SWindowRenderLayoutHints requestRenderHints(CWindow*);
     virtual void                     switchWindows(CWindow*, CWindow*);
+    virtual void                     moveWindowTo(CWindow*, const std::string& dir);
     virtual void                     alterSplitRatio(CWindow*, float, bool);
     virtual std::string              getLayoutName();
     virtual void                     replaceWindowDataWith(CWindow* from, CWindow* to);
@@ -77,15 +72,31 @@ class CHyprDwindleLayout : public IHyprLayout {
         bool yExtent = false;
     } m_PseudoDragFlags;
 
-    int               getNodesOnWorkspace(const int&);
-    void              applyNodeDataToWindow(SDwindleNodeData*, bool force = false);
-    SDwindleNodeData* getNodeFromWindow(CWindow*);
-    SDwindleNodeData* getFirstNodeOnWorkspace(const int&);
-    SDwindleNodeData* getMasterNodeOnWorkspace(const int&);
+    std::optional<Vector2D> m_vOverrideFocalPoint; // for onWindowCreatedTiling.
 
-    void              toggleSplit(CWindow*);
+    int                     getNodesOnWorkspace(const int&);
+    void                    applyNodeDataToWindow(SDwindleNodeData*, bool force = false);
+    SDwindleNodeData*       getNodeFromWindow(CWindow*);
+    SDwindleNodeData*       getFirstNodeOnWorkspace(const int&);
+    SDwindleNodeData*       getMasterNodeOnWorkspace(const int&);
 
-    OneTimeFocus      overrideDirection = OneTimeFocus::NOFOCUS;
+    void                    toggleSplit(CWindow*);
+
+    eDirection              overrideDirection = DIRECTION_DEFAULT;
 
     friend struct SDwindleNodeData;
+};
+
+template <typename CharT>
+struct std::formatter<SDwindleNodeData*, CharT> : std::formatter<CharT> {
+    template <typename FormatContext>
+    auto format(const SDwindleNodeData* const& node, FormatContext& ctx) const {
+        auto out = ctx.out();
+        if (!node)
+            return std::format_to(out, "[Node nullptr]");
+        std::format_to(out, "[Node {:x}: workspace: {}, pos: {:j2}, size: {:j2}", (uintptr_t)node, node->workspaceID, node->position, node->size);
+        if (!node->isNode && node->pWindow)
+            std::format_to(out, ", window: {:x}", node->pWindow);
+        return std::format_to(out, "]");
+    }
 };

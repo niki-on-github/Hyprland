@@ -3,7 +3,7 @@
 
 bool CFramebuffer::alloc(int w, int h) {
     bool firstAlloc = false;
-    RASSERT((w > 1 && h > 1), "cannot alloc a FB with negative / zero size! (attempted %ix%i)", w, h);
+    RASSERT((w > 1 && h > 1), "cannot alloc a FB with negative / zero size! (attempted {}x{})", w, h);
 
     if (m_iFb == (uint32_t)-1) {
         firstAlloc = true;
@@ -20,7 +20,7 @@ bool CFramebuffer::alloc(int w, int h) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     }
 
-    if (firstAlloc || m_Size != Vector2D(w, h)) {
+    if (firstAlloc || m_vSize != Vector2D(w, h)) {
         glBindTexture(GL_TEXTURE_2D, m_cTex.m_iTexID);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
@@ -40,15 +40,15 @@ bool CFramebuffer::alloc(int w, int h) {
 #endif
 
         auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        RASSERT((status == GL_FRAMEBUFFER_COMPLETE), "Framebuffer incomplete, couldn't create! (FB status: %i)", status);
+        RASSERT((status == GL_FRAMEBUFFER_COMPLETE), "Framebuffer incomplete, couldn't create! (FB status: {})", status);
 
-        Debug::log(LOG, "Framebuffer created, status %i", status);
+        Debug::log(LOG, "Framebuffer created, status {}", status);
     }
 
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, g_pHyprOpenGL->m_iCurrentOutputFb);
 
-    m_Size = Vector2D(w, h);
+    m_vSize = Vector2D(w, h);
 
     return true;
 }
@@ -63,17 +63,15 @@ void CFramebuffer::bind() {
 }
 
 void CFramebuffer::release() {
-    if (m_iFb != (uint32_t)-1 && m_iFb) {
+    if (m_iFb != (uint32_t)-1 && m_iFb)
         glDeleteFramebuffers(1, &m_iFb);
-    }
 
-    if (m_cTex.m_iTexID) {
+    if (m_cTex.m_iTexID)
         glDeleteTextures(1, &m_cTex.m_iTexID);
-    }
 
     m_cTex.m_iTexID = 0;
     m_iFb           = -1;
-    m_Size          = Vector2D();
+    m_vSize         = Vector2D();
 }
 
 CFramebuffer::~CFramebuffer() {
