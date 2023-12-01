@@ -45,7 +45,7 @@ if(CMAKE_BUILD_TYPE)
     elseif(BUILDTYPE_LOWER STREQUAL "minsizerel")
         set(BUILDTYPE_LOWER "minsize")
     elseif(BUILDTYPE_LOWER STREQUAL "none")
-        set(BUILDTYPE_LOWER "empty")
+        set(BUILDTYPE_LOWER "plain")
     else()
         set(BUILDTYPE_LOWER "release")
     endif()
@@ -57,12 +57,12 @@ ExternalProject_Add(
     wlroots
     PREFIX ${CMAKE_SOURCE_DIR}/subprojects/wlroots
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/subprojects/wlroots
-    PATCH_COMMAND sed -E -i -e "s/(soversion = 12)([^032]|$$)/soversion = 12032/g" meson.build
+    PATCH_COMMAND sed -E -i -e "s/(soversion = 13)([^032]|$$)/soversion = 13032/g" meson.build
     CONFIGURE_COMMAND meson setup build --buildtype=${BUILDTYPE_LOWER} -Dwerror=false -Dexamples=false -Drenderers=gles2 $<IF:$<BOOL:${WITH_ASAN}>,-Db_sanitize=address,-Db_sanitize=none> && meson setup build --buildtype=${BUILDTYPE_LOWER} -Dwerror=false -Dexamples=false -Drenderers=gles2 $<IF:$<BOOL:${WITH_ASAN}>,-Db_sanitize=address,-Db_sanitize=none> --reconfigure
     BUILD_COMMAND ninja -C build
     BUILD_ALWAYS true
     BUILD_IN_SOURCE true
-    BUILD_BYPRODUCTS ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.12032
+    BUILD_BYPRODUCTS ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.13032
     INSTALL_COMMAND echo "wlroots: install not needed"
 )
 
@@ -99,14 +99,19 @@ set(CMAKE_ENABLE_EXPORTS TRUE)
 message(STATUS "Checking deps...")
 
 find_package(Threads REQUIRED)
-
 find_package(PkgConfig REQUIRED)
 find_package(OpenGL REQUIRED)
 pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-server wayland-client wayland-cursor wayland-protocols cairo libdrm xkbcommon libinput pango pangocairo pixman-1) # we do not check for wlroots, as we provide it ourselves
 
 file(GLOB_RECURSE SRCFILES CONFIGURE_DEPENDS "src/*.cpp")
 
-add_executable(Hyprland ${SRCFILES})
+set(TRACY_CPP_FILES "")
+if(USE_TRACY)
+    set(TRACY_CPP_FILES "subprojects/tracy/public/TracyClient.cpp")
+    message(STATUS "Tracy enabled, TRACY_CPP_FILES: " ${TRACY_CPP_FILES})
+endif()
+
+add_executable(Hyprland ${SRCFILES} ${TRACY_CPP_FILES})
 add_dependencies(Hyprland wlroots)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
@@ -116,7 +121,7 @@ if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
         message(STATUS "Enabling ASan")
 
         target_link_libraries(Hyprland asan)
-        add_compile_options(-fsanitize=address)
+        target_compile_options(Hyprland PUBLIC -fsanitize=address)
     endif()
 
     if(USE_TRACY)
@@ -216,7 +221,7 @@ function(protocol protoPath protoName external)
 endfunction()
 
 target_link_libraries(Hyprland
-        ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.12032 # wlroots is provided by us
+        ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.13032 # wlroots is provided by us
         OpenGL::EGL
         OpenGL::GL
         Threads::Threads

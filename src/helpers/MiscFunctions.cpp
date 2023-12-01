@@ -185,13 +185,6 @@ std::string escapeJSONStrings(const std::string& str) {
     return oss.str();
 }
 
-void scaleBox(wlr_box* box, float scale) {
-    box->width  = std::round(box->width * scale);
-    box->height = std::round(box->height * scale);
-    box->x      = std::round(box->x * scale);
-    box->y      = std::round(box->y * scale);
-}
-
 std::string removeBeginEndSpacesTabs(std::string str) {
     if (str.empty())
         return str;
@@ -211,12 +204,12 @@ std::string removeBeginEndSpacesTabs(std::string str) {
     return str;
 }
 
-float getPlusMinusKeywordResult(std::string source, float relative) {
+std::optional<float> getPlusMinusKeywordResult(std::string source, float relative) {
     try {
         return relative + stof(source);
     } catch (...) {
         Debug::log(ERR, "Invalid arg \"{}\" in getPlusMinusKeywordResult!", source);
-        return INT_MAX;
+        return {};
     }
 }
 
@@ -249,8 +242,12 @@ bool isDirection(const std::string& arg) {
     return arg == "l" || arg == "r" || arg == "u" || arg == "d" || arg == "t" || arg == "b";
 }
 
+bool isDirection(const char& arg) {
+    return arg == 'l' || arg == 'r' || arg == 'u' || arg == 'd' || arg == 't' || arg == 'b';
+}
+
 int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
-    int result = INT_MAX;
+    int result = WORKSPACE_INVALID;
     if (in.starts_with("special")) {
         outName = "special";
 
@@ -283,17 +280,17 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
         }
     } else if (in.starts_with("prev")) {
         if (!g_pCompositor->m_pLastMonitor)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(g_pCompositor->m_pLastMonitor->activeWorkspace);
 
         if (!PWORKSPACE)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         const auto PLASTWORKSPACE = g_pCompositor->getWorkspaceByID(PWORKSPACE->m_sPrevWorkspace.iID);
 
         if (!PLASTWORKSPACE)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         outName = PLASTWORKSPACE->m_szName;
         return PLASTWORKSPACE->m_iID;
@@ -301,10 +298,15 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
         if (in[0] == 'r' && (in[1] == '-' || in[1] == '+') && isNumber(in.substr(2))) {
             if (!g_pCompositor->m_pLastMonitor) {
                 Debug::log(ERR, "Relative monitor workspace on monitor null!");
-                result = INT_MAX;
-                return result;
+                return WORKSPACE_INVALID;
             }
-            result = (int)getPlusMinusKeywordResult(in.substr(1), 0);
+
+            const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in.substr(1), 0);
+
+            if (!PLUSMINUSRESULT.has_value())
+                return WORKSPACE_INVALID;
+
+            result = (int)PLUSMINUSRESULT.value();
 
             int           remains = (int)result;
 
@@ -436,12 +438,16 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
 
             if (!g_pCompositor->m_pLastMonitor) {
                 Debug::log(ERR, "Relative monitor workspace on monitor null!");
-                result = INT_MAX;
-                return result;
+                return WORKSPACE_INVALID;
             }
 
             // monitor relative
-            result = (int)getPlusMinusKeywordResult(in.substr(1), 0);
+            const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in.substr(1), 0);
+
+            if (!PLUSMINUSRESULT.has_value())
+                return WORKSPACE_INVALID;
+
+            result = (int)PLUSMINUSRESULT.value();
 
             // result now has +/- what we should move on mon
             int              remains = (int)result;
@@ -482,11 +488,15 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
             outName = g_pCompositor->getWorkspaceByID(validWSes[currentItem])->m_szName;
         } else {
             if (in[0] == '+' || in[0] == '-') {
-                if (g_pCompositor->m_pLastMonitor)
-                    result = std::max((int)getPlusMinusKeywordResult(in, g_pCompositor->m_pLastMonitor->activeWorkspace), 1);
-                else {
+                if (g_pCompositor->m_pLastMonitor) {
+                    const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in, g_pCompositor->m_pLastMonitor->activeWorkspace);
+                    if (!PLUSMINUSRESULT.has_value())
+                        return WORKSPACE_INVALID;
+
+                    result = std::max((int)PLUSMINUSRESULT.value(), 1);
+                } else {
                     Debug::log(ERR, "Relative workspace on no mon!");
-                    result = INT_MAX;
+                    return WORKSPACE_INVALID;
                 }
             } else if (isNumber(in))
                 result = std::max(std::stoi(in), 1);
@@ -698,6 +708,10 @@ int64_t configStringToInt(const std::string& VALUE) {
     } else if (VALUE.starts_with("false") || VALUE.starts_with("off") || VALUE.starts_with("no")) {
         return 0;
     }
+
+    if (VALUE.empty() || !isNumber(VALUE))
+        return 0;
+
     return std::stoll(VALUE);
 }
 
@@ -750,4 +764,31 @@ std::vector<SCallstackFrameInfo> getBacktrace() {
 void throwError(const std::string& err) {
     Debug::log(CRIT, "Critical error thrown: {}", err);
     throw std::runtime_error(err);
+}
+
+uint32_t drmFormatToGL(uint32_t drm) {
+    switch (drm) {
+        case DRM_FORMAT_XRGB8888:
+        case DRM_FORMAT_XBGR8888: return GL_RGBA; // doesn't matter, opengl is gucci in this case.
+        case DRM_FORMAT_XRGB2101010:
+        case DRM_FORMAT_XBGR2101010:
+#ifdef GLES2
+            return GL_RGB10_A2_EXT;
+#else
+            return GL_RGB10_A2;
+#endif
+        default: return GL_RGBA;
+    }
+    UNREACHABLE();
+    return GL_RGBA;
+}
+
+uint32_t glFormatToType(uint32_t gl) {
+    return gl != GL_RGBA ?
+#ifdef GLES2
+        GL_UNSIGNED_INT_2_10_10_10_REV_EXT :
+#else
+        GL_UNSIGNED_INT_2_10_10_10_REV :
+#endif
+        GL_UNSIGNED_BYTE;
 }

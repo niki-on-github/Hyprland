@@ -31,7 +31,7 @@ bool CWLSurface::small() const {
     if (!m_pOwner || !exists())
         return false;
 
-    return m_pOwner->m_vReportedSize.x > m_pWLRSurface->current.buffer_width || m_pOwner->m_vReportedSize.y > m_pWLRSurface->current.buffer_height;
+    return m_pOwner->m_vReportedSize.x > m_pWLRSurface->current.buffer_width + 1 || m_pOwner->m_vReportedSize.y > m_pWLRSurface->current.buffer_height + 1;
 }
 
 Vector2D CWLSurface::correctSmallVec() const {
@@ -64,6 +64,8 @@ void CWLSurface::destroy() {
         g_pCompositor->m_pLastFocus = nullptr;
     if (g_pInputManager->m_pLastMouseSurface == m_pWLRSurface)
         g_pInputManager->m_pLastMouseSurface = nullptr;
+    if (g_pHyprRenderer->m_sLastCursorData.surf == m_pWLRSurface)
+        g_pHyprRenderer->m_sLastCursorData.surf.reset();
 
     m_pWLRSurface = nullptr;
 

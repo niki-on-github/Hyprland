@@ -98,8 +98,9 @@ void SubsurfaceTree::destroySurfaceTree(SSurfaceTreeNode* pNode) {
 
     // damage
     if (pNode->pSurface && pNode->pSurface->exists()) {
-        wlr_box extents = {};
-        wlr_surface_get_extends(pNode->pSurface->wlr(), &extents);
+        CBox extents = {};
+        wlr_surface_get_extends(pNode->pSurface->wlr(), extents.pWlr());
+        extents.applyFromWlr();
 
         int lx = 0, ly = 0;
         addSurfaceGlobalOffset(pNode, &lx, &ly);
@@ -198,7 +199,7 @@ void Events::listener_unmapSubsurface(void* owner, void* data) {
                 int lx = 0, ly = 0;
                 addSurfaceGlobalOffset(PNODE, &lx, &ly);
 
-                wlr_box extents = {lx, ly, 0, 0};
+                CBox extents = {lx, ly, 0, 0};
 
                 extents.width  = PNODE->pSurface->wlr()->current.width;
                 extents.height = PNODE->pSurface->wlr()->current.height;
@@ -219,6 +220,8 @@ void Events::listener_commitSubsurface(void* owner, void* data) {
 
     // no damaging if it's not visible
     if (!g_pHyprRenderer->shouldRenderWindow(pNode->pWindowOwner)) {
+        pNode->lastSize = pNode->pSurface->exists() ? Vector2D{pNode->pSurface->wlr()->current.width, pNode->pSurface->wlr()->current.height} : Vector2D{};
+
         static auto* const PLOGDAMAGE = &g_pConfigManager->getConfigValuePtr("debug:log_damage")->intValue;
         if (*PLOGDAMAGE)
             Debug::log(LOG, "Refusing to commit damage from {} because it's invisible.", pNode->pWindowOwner);
@@ -243,15 +246,21 @@ void Events::listener_commitSubsurface(void* owner, void* data) {
             }
         }
 
-    if (pNode->pSurface && pNode->pSurface->exists())
+    if (pNode->pSurface && pNode->pSurface->exists()) {
         g_pHyprRenderer->damageSurface(pNode->pSurface->wlr(), lx, ly, SCALE);
 
+        if (pNode->lastSize != Vector2D{pNode->pSurface->wlr()->current.width, pNode->pSurface->wlr()->current.height} && pNode->pWindowOwner)
+            g_pHyprRenderer->damageWindow(pNode->pWindowOwner);
+    }
+
     if (pNode->pWindowOwner) {
+        if (pNode->pWindowOwner->m_bIsX11)
+            pNode->pWindowOwner->m_vReportedSize = pNode->pWindowOwner->m_vPendingReportedSize; // apply pending size. We pinged, the window ponged.
+
         // tearing: if solitary, redraw it. This still might be a single surface window
         const auto PMONITOR = g_pCompositor->getMonitorFromID(pNode->pWindowOwner->m_iMonitorID);
         if (PMONITOR->solitaryClient == pNode->pWindowOwner && pNode->pWindowOwner->canBeTorn() && PMONITOR->tearingState.canTear &&
             pNode->pSurface->wlr()->current.committed & WLR_SURFACE_STATE_BUFFER) {
-
             CRegion damageBox;
             wlr_surface_get_effective_damage(pNode->pSurface->wlr(), damageBox.pixman());
 
@@ -266,6 +275,8 @@ void Events::listener_commitSubsurface(void* owner, void* data) {
             }
         }
     }
+
+    pNode->lastSize = pNode->pSurface->exists() ? Vector2D{pNode->pSurface->wlr()->current.width, pNode->pSurface->wlr()->current.height} : Vector2D{};
 }
 
 void Events::listener_destroySubsurface(void* owner, void* data) {

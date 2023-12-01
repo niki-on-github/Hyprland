@@ -3,6 +3,18 @@
 #include "wlr/types/wlr_switch.h"
 #include <ranges>
 
+CInputManager::~CInputManager() {
+    m_lConstraints.clear();
+    m_lKeyboards.clear();
+    m_lMice.clear();
+    m_lTablets.clear();
+    m_lTabletTools.clear();
+    m_lTabletPads.clear();
+    m_lIdleInhibitors.clear();
+    m_lTouchDevices.clear();
+    m_lSwitches.clear();
+}
+
 void CInputManager::onMouseMoved(wlr_pointer_motion_event* e) {
     static auto* const PSENS      = &g_pConfigManager->getConfigValuePtr("general:sensitivity")->floatValue;
     static auto* const PNOACCEL   = &g_pConfigManager->getConfigValuePtr("input:force_no_accel")->intValue;
@@ -112,7 +124,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     if (*PZOOMFACTOR != 1.f)
         g_pHyprRenderer->damageMonitor(PMONITOR);
 
-    if (!PMONITOR->solitaryClient && g_pHyprRenderer->shouldRenderCursor())
+    if (!PMONITOR->solitaryClient && g_pHyprRenderer->shouldRenderCursor() && PMONITOR->output->software_cursor_locks > 0)
         g_pCompositor->scheduleFrameForMonitor(PMONITOR);
 
     CWindow* forcedFocus = m_pForcedFocus;
@@ -221,10 +233,20 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         surfacePos   = PMONITOR->vecPosition;
     }
 
-    // overlay is above fullscreen
+    // overlays are above fullscreen
     if (!foundSurface)
         foundSurface = g_pCompositor->vectorToLayerSurface(mouseCoords, &PMONITOR->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords, &pFoundLayerSurface);
 
+    // also IME popups
+    if (!foundSurface) {
+        auto popup = g_pCompositor->vectorToIMEPopup(mouseCoords, m_sIMERelay.m_lIMEPopups);
+        if (popup) {
+            foundSurface = popup->pSurface->surface;
+            surfacePos   = Vector2D(popup->realX, popup->realY);
+        }
+    }
+
+    // also top layers
     if (!foundSurface)
         foundSurface = g_pCompositor->vectorToLayerSurface(mouseCoords, &PMONITOR->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &pFoundLayerSurface);
 
@@ -301,9 +323,9 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             if (g_pHyprRenderer->m_bHasARenderedCursor) {
                 // TODO: maybe wrap?
                 if (m_ecbClickBehavior == CLICKMODE_KILL)
-                    g_pHyprRenderer->setCursorFromName("crosshair");
+                    setCursorImageOverride("crosshair");
                 else
-                    g_pHyprRenderer->setCursorFromName("left_ptr");
+                    setCursorImageOverride("left_ptr");
             }
 
             m_bEmptyFocusCursorSet = true;
@@ -353,6 +375,14 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, foundSurface, surfaceLocal.x, surfaceLocal.y);
         wlr_seat_pointer_notify_motion(g_pCompositor->m_sSeat.seat, time, surfaceLocal.x, surfaceLocal.y);
         return;
+    }
+
+    if (pFoundWindow && foundSurface == pFoundWindow->m_pWLSurface.wlr() && !m_bCursorImageOverridden) {
+        const auto BOX = pFoundWindow->getWindowMainSurfaceBox();
+        if (!VECINRECT(mouseCoords, BOX.x, BOX.y, BOX.x + BOX.width, BOX.y + BOX.height))
+            setCursorImageOverride("left_ptr");
+        else
+            restoreCursorIconToApp();
     }
 
     if (pFoundWindow) {
@@ -451,7 +481,6 @@ void CInputManager::onMouseButton(wlr_pointer_button_event* e) {
 }
 
 void CInputManager::processMouseRequest(wlr_seat_pointer_request_set_cursor_event* e) {
-
     if (!e->surface)
         g_pHyprRenderer->m_bWindowRequestedCursorHide = true;
     else
@@ -460,25 +489,65 @@ void CInputManager::processMouseRequest(wlr_seat_pointer_request_set_cursor_even
     if (!cursorImageUnlocked() || !g_pHyprRenderer->m_bHasARenderedCursor)
         return;
 
-    // cursorSurfaceInfo.pSurface = e->surface;
+    if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client) {
+        m_sCursorSurfaceInfo.wlSurface.unassign();
 
-    // if (e->surface) {
-    //     hyprListener_CursorSurfaceDestroy.removeCallback();
-    //     hyprListener_CursorSurfaceDestroy.initCallback(
-    //         &e->surface->events.destroy, [&](void* owner, void* data) { cursorSurfaceInfo.pSurface = nullptr; }, this, "InputManager");
-    //     cursorSurfaceInfo.vHotspot = {e->hotspot_x, e->hotspot_y};
-    // }
+        if (e->surface) {
+            m_sCursorSurfaceInfo.wlSurface.assign(e->surface);
+            m_sCursorSurfaceInfo.vHotspot = {e->hotspot_x, e->hotspot_y};
+            m_sCursorSurfaceInfo.hidden   = false;
+        } else {
+            m_sCursorSurfaceInfo.vHotspot = {};
+            m_sCursorSurfaceInfo.hidden   = true;
+        }
 
-    if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client)
+        m_sCursorSurfaceInfo.name = "";
+
+        m_sCursorSurfaceInfo.inUse = true;
         g_pHyprRenderer->setCursorSurface(e->surface, e->hotspot_x, e->hotspot_y);
+    }
 }
 
 void CInputManager::processMouseRequest(wlr_cursor_shape_manager_v1_request_set_shape_event* e) {
     if (!g_pHyprRenderer->m_bHasARenderedCursor || !cursorImageUnlocked())
         return;
 
-    if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client)
-        g_pHyprRenderer->setCursorFromName(wlr_cursor_shape_v1_name(e->shape));
+    if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client) {
+        m_sCursorSurfaceInfo.wlSurface.unassign();
+        m_sCursorSurfaceInfo.vHotspot = {};
+        m_sCursorSurfaceInfo.name     = wlr_cursor_shape_v1_name(e->shape);
+        m_sCursorSurfaceInfo.hidden   = false;
+
+        m_sCursorSurfaceInfo.inUse = true;
+        g_pHyprRenderer->setCursorFromName(m_sCursorSurfaceInfo.name);
+    }
+}
+
+void CInputManager::restoreCursorIconToApp() {
+    if (m_sCursorSurfaceInfo.inUse)
+        return;
+
+    if (m_sCursorSurfaceInfo.hidden) {
+        g_pHyprRenderer->setCursorSurface(nullptr, 0, 0);
+        return;
+    }
+
+    if (m_sCursorSurfaceInfo.name.empty()) {
+        if (m_sCursorSurfaceInfo.wlSurface.exists())
+            g_pHyprRenderer->setCursorSurface(m_sCursorSurfaceInfo.wlSurface.wlr(), m_sCursorSurfaceInfo.vHotspot.x, m_sCursorSurfaceInfo.vHotspot.y);
+    } else {
+        g_pHyprRenderer->setCursorFromName(m_sCursorSurfaceInfo.name);
+    }
+
+    m_sCursorSurfaceInfo.inUse = true;
+}
+
+void CInputManager::setCursorImageOverride(const std::string& name) {
+    if (m_bCursorImageOverridden)
+        return;
+
+    m_sCursorSurfaceInfo.inUse = false;
+    g_pHyprRenderer->setCursorFromName(name);
 }
 
 bool CInputManager::cursorImageUnlocked() {
@@ -528,6 +597,9 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     const auto         PASS            = g_pKeybindManager->onMouseEvent(e);
     static auto* const PFOLLOWMOUSE    = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
     static auto* const PRESIZEONBORDER = &g_pConfigManager->getConfigValuePtr("general:resize_on_border")->intValue;
+    static auto* const PBORDERSIZE       = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+    static auto* const PBORDERGRABEXTEND = &g_pConfigManager->getConfigValuePtr("general:extend_border_grab_area")->intValue;
+    const auto         BORDER_GRAB_AREA  = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
 
     if (!PASS && !*PPASSMOUSE)
         return;
@@ -535,16 +607,15 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
     const auto w           = g_pCompositor->vectorToWindowIdeal(mouseCoords);
 
-    if (w && !w->m_bIsFullscreen && !w->hasPopupAt(mouseCoords) && w->m_sGroupData.pNextWindow) {
-        const wlr_box box = w->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
-        if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
-            if (e->state == WLR_BUTTON_PRESSED) {
-                const int SIZE    = w->getGroupSize();
-                CWindow*  pWindow = w->getGroupWindowByIndex((mouseCoords.x - box.x) * SIZE / box.width);
-                if (w != pWindow)
-                    w->setGroupCurrent(pWindow);
+    if (w && !w->m_bIsFullscreen && !w->hasPopupAt(mouseCoords)) {
+        for (auto& wd : w->m_dWindowDecorations) {
+            if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
+                continue;
+
+            if (g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(mouseCoords)) {
+                wd->onMouseButtonOnDeco(mouseCoords, e);
+                return;
             }
-            return;
         }
     }
 
@@ -552,8 +623,9 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     // TODO detect click on LS properly
     if (*PRESIZEONBORDER && !m_bLastFocusOnLS) {
         if (w && !w->m_bIsFullscreen) {
-            const wlr_box real = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
-            if ((!wlr_box_contains_point(&real, mouseCoords.x, mouseCoords.y) || w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) && !w->hasPopupAt(mouseCoords)) {
+            const CBox real = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+            const CBox grab = {real.x - BORDER_GRAB_AREA, real.y - BORDER_GRAB_AREA, real.width + 2 * BORDER_GRAB_AREA, real.height + 2 * BORDER_GRAB_AREA};
+            if ((grab.containsPoint(mouseCoords) && (!real.containsPoint(mouseCoords) || w->isInCurvedCorner(mouseCoords.x, mouseCoords.y))) && !w->hasPopupAt(mouseCoords)) {
                 g_pKeybindManager->resizeWithBorder(e);
                 return;
             }
@@ -620,7 +692,10 @@ void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
 
     auto               factor = (*PSCROLLFACTOR <= 0.f || e->source != WLR_AXIS_SOURCE_FINGER ? 1.f : *PSCROLLFACTOR);
 
-    bool               passEvent = g_pKeybindManager->onAxisEvent(e);
+    const auto         EMAP = std::unordered_map<std::string, std::any>{{"event", e}};
+    EMIT_HOOK_EVENT_CANCELLABLE("mouseAxis", EMAP);
+
+    bool passEvent = g_pKeybindManager->onAxisEvent(e);
 
     g_pCompositor->notifyIdleActivity();
 
@@ -628,8 +703,8 @@ void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
     const auto pWindow     = g_pCompositor->vectorToWindowIdeal(MOUSECOORDS);
 
     if (*PGROUPBARSCROLLING && pWindow && !pWindow->m_bIsFullscreen && !pWindow->hasPopupAt(MOUSECOORDS) && pWindow->m_sGroupData.pNextWindow) {
-        const wlr_box box = pWindow->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
-        if (wlr_box_contains_point(&box, MOUSECOORDS.x, MOUSECOORDS.y)) {
+        const CBox box = g_pDecorationPositioner->getWindowDecorationBox(pWindow->getDecorationByType(DECORATION_GROUPBAR));
+        if (box.containsPoint(MOUSECOORDS)) {
             if (e->delta > 0)
                 pWindow->setGroupCurrent(pWindow->m_sGroupData.pNextWindow);
             else
@@ -1006,7 +1081,7 @@ void CInputManager::setPointerConfigs() {
 
                     const auto CONFIG = libinput_config_accel_create(LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
                     libinput_config_accel_set_points(CONFIG, LIBINPUT_ACCEL_TYPE_MOTION, step, points.size(), points.data());
-                    libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
+                    libinput_device_config_accel_apply(LIBINPUTDEV, CONFIG);
                     libinput_config_accel_destroy(CONFIG);
                 } catch (std::exception& e) { Debug::log(ERR, "Invalid values in custom accel profile"); }
             } else {
@@ -1084,6 +1159,9 @@ void CInputManager::onKeyboardKey(wlr_keyboard_key_event* e, SKeyboard* pKeyboar
     if (!pKeyboard->enabled)
         return;
 
+    const auto EMAP = std::unordered_map<std::string, std::any>{{"keyboard", pKeyboard}, {"event", e}};
+    EMIT_HOOK_EVENT_CANCELLABLE("keyPress", EMAP);
+
     static auto* const PDPMS = &g_pConfigManager->getConfigValuePtr("misc:key_press_enables_dpms")->intValue;
     if (*PDPMS && !g_pCompositor->m_bDPMSStateON) {
         // enable dpms
@@ -1160,7 +1238,7 @@ void CInputManager::updateDragIcon() {
     switch (m_sDrag.dragIcon->drag->grab_type) {
         case WLR_DRAG_GRAB_KEYBOARD: break;
         case WLR_DRAG_GRAB_KEYBOARD_POINTER: {
-            wlr_box box = {m_sDrag.pos.x - 2, m_sDrag.pos.y - 2, m_sDrag.dragIcon->surface->current.width + 4, m_sDrag.dragIcon->surface->current.height + 4};
+            CBox box = {m_sDrag.pos.x - 2, m_sDrag.pos.y - 2, m_sDrag.dragIcon->surface->current.width + 4, m_sDrag.dragIcon->surface->current.height + 4};
             g_pHyprRenderer->damageBox(&box);
             m_sDrag.pos = getMouseCoordsInternal();
             break;
@@ -1427,9 +1505,9 @@ void CInputManager::setTabletConfigs() {
 
             const auto REGION_POS  = g_pConfigManager->getDeviceVec(t.name, "region_position", "input:tablet:region_position");
             const auto REGION_SIZE = g_pConfigManager->getDeviceVec(t.name, "region_size", "input:tablet:region_size");
-            const auto REGION      = wlr_box{REGION_POS.x, REGION_POS.y, REGION_SIZE.x, REGION_SIZE.y};
-            if (!wlr_box_empty(&REGION))
-                wlr_cursor_map_input_to_region(g_pCompositor->m_sWLRCursor, t.wlrDevice, &REGION);
+            auto       regionBox   = CBox{REGION_POS.x, REGION_POS.y, REGION_SIZE.x, REGION_SIZE.y};
+            if (!regionBox.empty())
+                wlr_cursor_map_input_to_region(g_pCompositor->m_sWLRCursor, t.wlrDevice, regionBox.pWlr());
         }
     }
 }
@@ -1487,7 +1565,8 @@ void CInputManager::destroySwitch(SSwitchDevice* pDevice) {
 
 void CInputManager::setCursorImageUntilUnset(std::string name) {
     g_pHyprRenderer->setCursorFromName(name.c_str());
-    m_bCursorImageOverridden = true;
+    m_bCursorImageOverridden   = true;
+    m_sCursorSurfaceInfo.inUse = false;
 }
 
 void CInputManager::unsetCursorImage() {
@@ -1495,8 +1574,7 @@ void CInputManager::unsetCursorImage() {
         return;
 
     m_bCursorImageOverridden = false;
-    if (!g_pHyprRenderer->m_bWindowRequestedCursorHide)
-        g_pHyprRenderer->setCursorFromName("left_ptr");
+    restoreCursorIconToApp();
 }
 
 std::string CInputManager::deviceNameToInternalString(std::string in) {
@@ -1574,49 +1652,70 @@ void CInputManager::setCursorIconOnBorder(CWindow* w) {
     // give a small leeway (10 px) for corner icon
     const auto           CORNER           = *PROUNDING + BORDERSIZE + 10;
     const auto           mouseCoords      = getMouseCoordsInternal();
-    wlr_box              box              = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+    CBox                 box              = w->getWindowMainSurfaceBox();
     eBorderIconDirection direction        = BORDERICON_NONE;
-    wlr_box              boxFullGrabInput = {box.x - *PEXTENDBORDERGRAB - BORDERSIZE, box.y - *PEXTENDBORDERGRAB - BORDERSIZE, box.width + 2 * (*PEXTENDBORDERGRAB + BORDERSIZE),
-                                box.height + 2 * (*PEXTENDBORDERGRAB + BORDERSIZE)};
+    CBox                 boxFullGrabInput = {box.x - *PEXTENDBORDERGRAB - BORDERSIZE, box.y - *PEXTENDBORDERGRAB - BORDERSIZE, box.width + 2 * (*PEXTENDBORDERGRAB + BORDERSIZE),
+                             box.height + 2 * (*PEXTENDBORDERGRAB + BORDERSIZE)};
 
-    if (!wlr_box_contains_point(&boxFullGrabInput, mouseCoords.x, mouseCoords.y) || (!m_lCurrentlyHeldButtons.empty() && !currentlyDraggedWindow)) {
+    if (w->hasPopupAt(mouseCoords))
         direction = BORDERICON_NONE;
-    } else if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
-        if (!w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) {
-            direction = BORDERICON_NONE;
-        } else {
-            if (mouseCoords.y < box.y + CORNER) {
-                if (mouseCoords.x < box.x + CORNER)
-                    direction = BORDERICON_UP_LEFT;
-                else
-                    direction = BORDERICON_UP_RIGHT;
-            } else {
-                if (mouseCoords.x < box.x + CORNER)
-                    direction = BORDERICON_DOWN_LEFT;
-                else
-                    direction = BORDERICON_DOWN_RIGHT;
+    else if (!boxFullGrabInput.containsPoint(mouseCoords) || (!m_lCurrentlyHeldButtons.empty() && !currentlyDraggedWindow))
+        direction = BORDERICON_NONE;
+    else {
+
+        bool onDeco = false;
+
+        for (auto& wd : w->m_dWindowDecorations) {
+            if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
+                continue;
+
+            if (g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(mouseCoords)) {
+                onDeco = true;
+                break;
             }
         }
-    } else {
-        if (mouseCoords.y < box.y + CORNER) {
-            if (mouseCoords.x < box.x + CORNER)
-                direction = BORDERICON_UP_LEFT;
-            else if (mouseCoords.x > box.x + box.width - CORNER)
-                direction = BORDERICON_UP_RIGHT;
-            else
-                direction = BORDERICON_UP;
-        } else if (mouseCoords.y > box.y + box.height - CORNER) {
-            if (mouseCoords.x < box.x + CORNER)
-                direction = BORDERICON_DOWN_LEFT;
-            else if (mouseCoords.x > box.x + box.width - CORNER)
-                direction = BORDERICON_DOWN_RIGHT;
-            else
-                direction = BORDERICON_DOWN;
-        } else {
-            if (mouseCoords.x < box.x + CORNER)
-                direction = BORDERICON_LEFT;
-            else if (mouseCoords.x > box.x + box.width - CORNER)
-                direction = BORDERICON_RIGHT;
+
+        if (onDeco)
+            direction = BORDERICON_NONE;
+        else {
+            if (box.containsPoint(mouseCoords)) {
+                if (!w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) {
+                    direction = BORDERICON_NONE;
+                } else {
+                    if (mouseCoords.y < box.y + CORNER) {
+                        if (mouseCoords.x < box.x + CORNER)
+                            direction = BORDERICON_UP_LEFT;
+                        else
+                            direction = BORDERICON_UP_RIGHT;
+                    } else {
+                        if (mouseCoords.x < box.x + CORNER)
+                            direction = BORDERICON_DOWN_LEFT;
+                        else
+                            direction = BORDERICON_DOWN_RIGHT;
+                    }
+                }
+            } else {
+                if (mouseCoords.y < box.y + CORNER) {
+                    if (mouseCoords.x < box.x + CORNER)
+                        direction = BORDERICON_UP_LEFT;
+                    else if (mouseCoords.x > box.x + box.width - CORNER)
+                        direction = BORDERICON_UP_RIGHT;
+                    else
+                        direction = BORDERICON_UP;
+                } else if (mouseCoords.y > box.y + box.height - CORNER) {
+                    if (mouseCoords.x < box.x + CORNER)
+                        direction = BORDERICON_DOWN_LEFT;
+                    else if (mouseCoords.x > box.x + box.width - CORNER)
+                        direction = BORDERICON_DOWN_RIGHT;
+                    else
+                        direction = BORDERICON_DOWN;
+                } else {
+                    if (mouseCoords.x < box.x + CORNER)
+                        direction = BORDERICON_LEFT;
+                    else if (mouseCoords.x > box.x + box.width - CORNER)
+                        direction = BORDERICON_RIGHT;
+                }
+            }
         }
     }
 

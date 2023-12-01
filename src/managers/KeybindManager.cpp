@@ -641,11 +641,6 @@ void CKeybindManager::spawn(std::string args) {
         args  = args.substr(args.find_first_of(']') + 1);
     }
 
-    if (g_pXWaylandManager->m_sWLRXWayland)
-        args = "WAYLAND_DISPLAY=" + std::string(g_pCompositor->m_szWLDisplaySocket) + " DISPLAY=" + std::string(g_pXWaylandManager->m_sWLRXWayland->display_name) + " " + args;
-    else
-        args = "WAYLAND_DISPLAY=" + std::string(g_pCompositor->m_szWLDisplaySocket) + " " + args;
-
     const uint64_t PROC = spawnRaw(args);
 
     if (!RULES.empty()) {
@@ -735,20 +730,16 @@ void CKeybindManager::clearKeybinds() {
 void CKeybindManager::toggleActiveFloating(std::string args) {
     CWindow* PWINDOW = nullptr;
 
-    if (args != "" && args != "active" && args.length() > 1) {
+    if (args != "" && args != "active" && args.length() > 1)
         PWINDOW = g_pCompositor->getWindowByRegex(args);
-    } else {
+    else
         PWINDOW = g_pCompositor->m_pLastWindow;
-    }
 
     if (!PWINDOW)
         return;
 
     // remove drag status
     g_pInputManager->currentlyDraggedWindow = nullptr;
-
-    if (g_pCompositor->isWorkspaceSpecial(PWINDOW->m_iWorkspaceID))
-        return;
 
     if (PWINDOW->m_sGroupData.pNextWindow && PWINDOW->m_sGroupData.pNextWindow != PWINDOW) {
 
@@ -831,7 +822,7 @@ void CKeybindManager::changeworkspace(std::string args) {
         workspaceToChangeTo = getWorkspaceIDFromString(args, workspaceName);
     }
 
-    if (workspaceToChangeTo == INT_MAX) {
+    if (workspaceToChangeTo == WORKSPACE_INVALID) {
         Debug::log(ERR, "Error in changeworkspace, invalid value");
         return;
     }
@@ -926,7 +917,7 @@ void CKeybindManager::moveActiveToWorkspace(std::string args) {
     std::string workspaceName;
     const auto  WORKSPACEID = getWorkspaceIDFromString(args, workspaceName);
 
-    if (WORKSPACEID == INT_MAX) {
+    if (WORKSPACEID == WORKSPACE_INVALID) {
         Debug::log(LOG, "Invalid workspace in moveActiveToWorkspace");
         return;
     }
@@ -954,6 +945,11 @@ void CKeybindManager::moveActiveToWorkspace(std::string args) {
     }
 
     POLDWS->m_pLastFocusedWindow = g_pCompositor->getFirstWindowOnWorkspace(POLDWS->m_iID);
+
+    if (pWorkspace->m_bIsSpecialWorkspace)
+        pMonitor->setSpecialWorkspace(pWorkspace);
+    else if (POLDWS->m_bIsSpecialWorkspace)
+        g_pCompositor->getMonitorFromID(POLDWS->m_iMonitorID)->setSpecialWorkspace(nullptr);
 
     pMonitor->changeWorkspace(pWorkspace);
 
@@ -983,7 +979,7 @@ void CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
 
     const int   WORKSPACEID = getWorkspaceIDFromString(args, workspaceName);
 
-    if (WORKSPACEID == INT_MAX) {
+    if (WORKSPACEID == WORKSPACE_INVALID) {
         Debug::log(ERR, "Error in moveActiveToWorkspaceSilent, invalid value");
         return;
     }
@@ -1010,7 +1006,8 @@ void CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
 }
 
 void CKeybindManager::moveFocusTo(std::string args) {
-    char arg = args[0];
+    static auto* const PFULLCYCLE = &g_pConfigManager->getConfigValuePtr("binds:movefocus_cycles_fullscreen")->intValue;
+    char               arg        = args[0];
 
     if (!isDirection(args)) {
         Debug::log(ERR, "Cannot move focus in direction {}, unsupported direction. Supported: l,r,u/t,d/b", arg);
@@ -1026,7 +1023,7 @@ void CKeybindManager::moveFocusTo(std::string args) {
     // remove constraints
     g_pInputManager->unconstrainMouse();
 
-    const auto PWINDOWTOCHANGETO = PLASTWINDOW->m_bIsFullscreen ?
+    const auto PWINDOWTOCHANGETO = *PFULLCYCLE && PLASTWINDOW->m_bIsFullscreen ?
         (arg == 'd' || arg == 'b' || arg == 'r' ? g_pCompositor->getNextWindowOnWorkspace(PLASTWINDOW, true) : g_pCompositor->getPrevWindowOnWorkspace(PLASTWINDOW, true)) :
         g_pCompositor->getWindowInDirection(PLASTWINDOW, arg);
 
@@ -1221,24 +1218,16 @@ void CKeybindManager::toggleSplit(std::string args) {
 }
 
 void CKeybindManager::alterSplitRatio(std::string args) {
-    float splitratio = 0;
-    bool  exact      = false;
+    std::optional<float> splitResult;
+    bool                 exact = false;
 
-    if (args == "+" || args == "-") {
-        Debug::log(LOG, "alterSplitRatio: using LEGACY +/-, consider switching to the Hyprland syntax.");
-        splitratio = (args == "+" ? 0.05f : -0.05f);
-    }
+    if (args.starts_with("exact")) {
+        exact       = true;
+        splitResult = getPlusMinusKeywordResult(args.substr(5), 0);
+    } else
+        splitResult = getPlusMinusKeywordResult(args, 0);
 
-    if (splitratio == 0) {
-        if (args.starts_with("exact")) {
-            exact      = true;
-            splitratio = getPlusMinusKeywordResult(args.substr(5), 0);
-        } else {
-            splitratio = getPlusMinusKeywordResult(args, 0);
-        }
-    }
-
-    if (splitratio == INT_MAX) {
+    if (!splitResult.has_value()) {
         Debug::log(ERR, "Splitratio invalid in alterSplitRatio!");
         return;
     }
@@ -1248,7 +1237,7 @@ void CKeybindManager::alterSplitRatio(std::string args) {
     if (!PLASTWINDOW)
         return;
 
-    g_pLayoutManager->getCurrentLayout()->alterSplitRatio(PLASTWINDOW, splitratio, exact);
+    g_pLayoutManager->getCurrentLayout()->alterSplitRatio(PLASTWINDOW, splitResult.value(), exact);
 }
 
 void CKeybindManager::focusMonitor(std::string arg) {
@@ -1430,7 +1419,7 @@ void CKeybindManager::moveWorkspaceToMonitor(std::string args) {
     std::string workspaceName;
     const int   WORKSPACEID = getWorkspaceIDFromString(workspace, workspaceName);
 
-    if (WORKSPACEID == INT_MAX) {
+    if (WORKSPACEID == WORKSPACE_INVALID) {
         Debug::log(ERR, "moveWorkspaceToMonitor invalid workspace!");
         return;
     }
@@ -1452,7 +1441,7 @@ void CKeybindManager::toggleSpecialWorkspace(std::string args) {
     std::string        workspaceName = "";
     int                workspaceID   = getWorkspaceIDFromString("special:" + args, workspaceName);
 
-    if (workspaceID == INT_MAX || !g_pCompositor->isWorkspaceSpecial(workspaceID)) {
+    if (workspaceID == WORKSPACE_INVALID || !g_pCompositor->isWorkspaceSpecial(workspaceID)) {
         Debug::log(ERR, "Invalid workspace passed to special");
         return;
     }
@@ -1490,7 +1479,7 @@ void CKeybindManager::forceRendererReload(std::string args) {
         if (!m->output)
             continue;
 
-        auto rule = g_pConfigManager->getMonitorRuleFor(m->szName, m->output->description ? m->output->description : "");
+        auto rule = g_pConfigManager->getMonitorRuleFor(m->szName, m->szDescription);
         if (!g_pHyprRenderer->applyMonitorRule(m.get(), &rule, true)) {
             overAgain = true;
             break;
@@ -1845,25 +1834,22 @@ void CKeybindManager::mouse(std::string args) {
             const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
             CWindow*   pWindow     = g_pCompositor->vectorToWindowIdeal(mouseCoords);
 
-            if (pWindow && !pWindow->m_bIsFullscreen && !pWindow->hasPopupAt(mouseCoords) && pWindow->m_sGroupData.pNextWindow) {
-                const wlr_box box = pWindow->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
-                if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
-                    const int SIZE = pWindow->getGroupSize();
-                    pWindow        = pWindow->getGroupWindowByIndex((mouseCoords.x - box.x) * SIZE / box.width);
+            if (pWindow && !pWindow->m_bIsFullscreen && !pWindow->hasPopupAt(mouseCoords)) {
+                for (auto& wd : pWindow->m_dWindowDecorations) {
+                    if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
+                        continue;
 
-                    // hack
-                    g_pLayoutManager->getCurrentLayout()->onWindowRemoved(pWindow);
-                    if (!pWindow->m_bIsFloating) {
-                        const bool GROUPSLOCKEDPREV        = g_pKeybindManager->m_bGroupsLocked;
-                        g_pKeybindManager->m_bGroupsLocked = true;
-                        g_pLayoutManager->getCurrentLayout()->onWindowCreated(pWindow);
-                        g_pKeybindManager->m_bGroupsLocked = GROUPSLOCKEDPREV;
+                    if (g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(mouseCoords)) {
+                        wd->onBeginWindowDragOnDeco(mouseCoords);
+                        break;
                     }
                 }
             }
 
-            g_pInputManager->currentlyDraggedWindow = pWindow;
-            g_pInputManager->dragMode               = MBIND_MOVE;
+            if (!g_pInputManager->currentlyDraggedWindow)
+                g_pInputManager->currentlyDraggedWindow = pWindow;
+
+            g_pInputManager->dragMode = MBIND_MOVE;
             g_pLayoutManager->getCurrentLayout()->onBeginDragWindow();
         } else {
             g_pKeybindManager->m_bIsMouseBindActive = false;
@@ -1923,7 +1909,7 @@ void CKeybindManager::alterZOrder(std::string args) {
     else if (POSITION == "bottom")
         g_pCompositor->changeWindowZOrder(PWINDOW, 0);
     else {
-        Debug::log(ERR, "alterZOrder: bad position: %s", POSITION);
+        Debug::log(ERR, "alterZOrder: bad position: {}", POSITION);
         return;
     }
 
@@ -1972,9 +1958,6 @@ void CKeybindManager::moveWindowIntoGroup(CWindow* pWindow, CWindow* pWindowInDi
     if (pWindow->m_sGroupData.deny)
         return;
 
-    if (!pWindow->m_sGroupData.pNextWindow)
-        pWindow->m_dWindowDecorations.emplace_back(std::make_unique<CHyprGroupBarDecoration>(pWindow));
-
     g_pLayoutManager->getCurrentLayout()->onWindowRemoved(pWindow); // This removes groupped property!
 
     static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("group:insert_after_current")->intValue;
@@ -1986,6 +1969,9 @@ void CKeybindManager::moveWindowIntoGroup(CWindow* pWindow, CWindow* pWindowInDi
     g_pLayoutManager->getCurrentLayout()->recalculateWindow(pWindow);
     g_pCompositor->focusWindow(pWindow);
     g_pCompositor->warpCursorTo(pWindow->middle());
+
+    if (!pWindow->getDecorationByType(DECORATION_GROUPBAR))
+        pWindow->addWindowDeco(std::make_unique<CHyprGroupBarDecoration>(pWindow));
 }
 
 void CKeybindManager::moveWindowOutOfGroup(CWindow* pWindow, const std::string& dir) {
@@ -2075,7 +2061,7 @@ void CKeybindManager::moveWindowOrGroup(std::string args) {
     static auto* const PIGNOREGROUPLOCK = &g_pConfigManager->getConfigValuePtr("binds:ignore_group_lock")->intValue;
 
     if (!isDirection(args)) {
-        Debug::log(ERR, "Cannot move into group in direction %c, unsupported direction. Supported: l,r,u/t,d/b", arg);
+        Debug::log(ERR, "Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", arg);
         return;
     }
 

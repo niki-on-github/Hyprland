@@ -1,5 +1,6 @@
 {
   lib,
+  fetchurl,
   stdenv,
   pkg-config,
   makeWrapper,
@@ -10,6 +11,7 @@
   git,
   hyprland-protocols,
   jq,
+  libGL,
   libdrm,
   libinput,
   libxcb,
@@ -26,7 +28,6 @@
   xcbutilwm,
   xwayland,
   debug ? false,
-  enableNvidiaPatches ? false,
   enableXWayland ? true,
   legacyRenderer ? false,
   withSystemd ? lib.meta.availableOn stdenv.hostPlatform systemd,
@@ -34,13 +35,25 @@
   version ? "git",
   commit,
   # deprecated flags
+  enableNvidiaPatches ? false,
   nvidiaPatches ? false,
   hidpiXWayland ? false,
 }:
-assert lib.assertMsg (!nvidiaPatches) "The option `nvidiaPatches` has been renamed `enableNvidiaPatches`";
+let
+  # NOTE: remove after https://github.com/NixOS/nixpkgs/pull/271096 reaches nixos-unstable
+  libdrm_2_4_118 = libdrm.overrideAttrs(attrs: rec {
+    version = "2.4.118";
+    src = fetchurl {
+      url = "https://dri.freedesktop.org/${attrs.pname}/${attrs.pname}-${version}.tar.xz";
+      hash = "sha256-p3e9hfK1/JxX+IbIIFgwBXgxfK/bx30Kdp1+mpVnq4g=";
+    };
+  });
+in
+assert lib.assertMsg (!nvidiaPatches) "The option `nvidiaPatches` has been removed.";
+assert lib.assertMsg (!enableNvidiaPatches) "The option `enableNvidiaPatches` has been removed.";
 assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hyprland.org/Configuring/XWayland";
   stdenv.mkDerivation {
-    pname = "hyprland${lib.optionalString enableNvidiaPatches "-nvidia"}${lib.optionalString debug "-debug"}";
+    pname = "hyprland${lib.optionalString debug "-debug"}";
     inherit version;
 
     src = lib.cleanSourceWith {
@@ -71,7 +84,8 @@ assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been remov
         git
         cairo
         hyprland-protocols
-        libdrm
+        libGL
+        libdrm_2_4_118
         libinput
         libxkbcommon
         mesa
@@ -80,7 +94,7 @@ assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been remov
         wayland
         wayland-protocols
         pciutils
-        (wlroots.override {inherit enableNvidiaPatches;})
+        wlroots
       ]
       ++ lib.optionals enableXWayland [libxcb xcbutilwm xwayland]
       ++ lib.optionals withSystemd [systemd];
@@ -90,8 +104,9 @@ assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been remov
       then "debug"
       else "release";
 
+    mesonAutoFeatures = "disabled";
+
     mesonFlags = builtins.concatLists [
-      ["-Dauto_features=disabled"]
       (lib.optional enableXWayland "-Dxwayland=enabled")
       (lib.optional legacyRenderer "-Dlegacy_renderer=enabled")
       (lib.optional withSystemd "-Dsystemd=enabled")
